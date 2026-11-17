@@ -578,6 +578,11 @@ bool MkStream::OpenRing() {
         existed = true;
     }
     if (!ringMap_) {
+        // Not allowed to create Global\ objects here: use the session-local name instead.
+        ringMap_ = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, MK_RING_BYTES, MK_RING_NAME_LOCAL);
+        existed = GetLastError() == ERROR_ALREADY_EXISTS;
+    }
+    if (!ringMap_) {
         MkLog("ring: unavailable (err %lu)", GetLastError());
         return false;
     }

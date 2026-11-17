@@ -4,7 +4,8 @@
 #pragma once
 #include <stdint.h>
 
-#define MK_RING_NAME    L"Global\\Macawlink.Video"
+#define MK_RING_NAME       L"Global\\Macawlink.Video"  // created by Frame Server (has SeCreateGlobalPrivilege)
+#define MK_RING_NAME_LOCAL L"Local\\Macawlink.Video"   // fallback if the source runs inside the app's session
 #define MK_RING_MAGIC   0x43564B4Du  // "MKVC"
 #define MK_RING_VERSION 1u
 #define MK_RING_SLOTS   3

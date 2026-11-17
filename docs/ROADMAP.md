@@ -1,27 +1,25 @@
 # Macawlink Roadmap
 
-## Phase 0 — Skeleton (this commit)
-- [x] Architecture, protocol, icon
-- [x] Android and Go project scaffolds with the module layout
+## Phase 0: Blueprint ✅
+- [x] Architecture, protocol, icon, scaffolds
 
-## Phase 1 — MVP over USB
-- [ ] Android: CameraX → H.264 encoder → USB transport; AudioRecord → Opus
-- [ ] Go: adb forward, protocol, FFmpeg decode, Opus decode
-- [ ] `vcam-native`: MF virtual camera DLL reading the shared-memory ring ("Macawlink Camera")
-- [ ] Audio into VB-Audio Virtual Cable ("CABLE Output" as mic)
-- [ ] Tray: connect/disconnect, resolution, fps, bitrate, audio sample rate/codec
-- **Exit test:** a Teams/Zoom call using the phone as camera + mic for 30 min, < 80 ms latency
+## Phase 1: USB MVP ✅ (built, awaiting first run on real hardware)
+- [x] Android: Camera2 → hardware H.264/HEVC, PCM mic with AEC/NS/AGC, loopback server, foreground service, Compose settings UI, presets, rotation, torch/zoom/stabilization
+- [x] Windows DLL: MF virtual camera source (“Macawlink Camera”), MF H.264/HEVC decoder, WASAPI output
+- [x] Go receiver: adb discovery + auto-launch, protocol session, decode → rotate → crop/scale → ring, PCM → gain → CABLE Input, live settings both ways, tray, settings page, installer
+- [x] Tests: protocol golden fixtures shared by Go and Kotlin, end-to-end session test with a fake phone, scaler/rotation/ring layout tests, settings API tests
+- [ ] **Hardware validation:** Teams/Zoom/OBS call for 30 min on a real phone + Windows 11 PC, target < 80 ms glass-to-app
 
-## Phase 2 — Wi-Fi and polish
+## Phase 2: Wi-Fi and polish
 - [ ] mDNS discovery, QR pairing, TLS 1.3 with pinning
-- [ ] Auto bitrate, keyframe-on-demand, A/V sync tuning
-- [ ] Live settings changes from phone and PC; presets
-- [ ] Waiting-for-phone frame, reconnect, thermal/battery handling
-- [ ] Installer (registers DLL, adds firewall rule, bundles adb)
+- [ ] Opus audio (needed for Wi-Fi bandwidth)
+- [ ] Adaptive bitrate from RTT and queue depth; thermal step-down
+- [ ] A/V sync on the PC (audio-clocked presentation)
+- [ ] Faster scaler (SIMD or the MF video processor) for 1080p60 → other sizes
+- [ ] Phone preview while streaming
 
-## Phase 3 — Native microphone + extras
-- [ ] SYSVAD-based "Macawlink Microphone" driver, EV cert + attestation signing
+## Phase 3: Native microphone and extras
+- [ ] SYSVAD-based “Macawlink Microphone” driver (EV cert + attestation signing)
 - [ ] DirectShow fallback camera for Windows 10
-- [ ] HEVC, 4K, manual focus/exposure from the PC
-- [ ] QUIC transport for lossy Wi-Fi
-- [ ] Multiple phones as multiple cameras
+- [ ] 1440p/4K, manual focus/exposure from the PC
+- [ ] Several phones as several cameras

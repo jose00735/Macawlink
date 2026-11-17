@@ -1,300 +1,161 @@
-# Macawlink — Architecture Blueprint
+# Macawlink — Architecture
 
-Macawlink turns an Android phone into a **webcam + microphone for a Windows PC**.
-To every Windows app (Teams, Zoom, Meet in Chrome, OBS, Discord, the Windows Camera app)
-it must look like someone just plugged in a USB camera and a USB mic:
+Macawlink turns an Android phone into a **webcam + microphone for a Windows PC**. To every
+Windows app (Teams, Zoom, Meet, OBS, Discord, the Windows Camera app) it looks like a USB camera
+and mic were plugged in:
 
-- a camera device named **"Macawlink Camera"**
-- a recording device named **"Macawlink Microphone"**
+- a camera named **“Macawlink Camera”** (Windows 11 virtual camera)
+- a microphone: **“CABLE Output”** today (VB-Audio Virtual Cable), **“Macawlink Microphone”** with the Phase 3 driver
 
 | Side | Language | Role |
 |---|---|---|
-| Android sender | Kotlin | Capture camera + mic, encode, stream, apply settings |
-| Windows receiver | Go (+ two thin native shims) | Receive, decode, feed the virtual camera and virtual mic, tray UI |
+| Android sender | Kotlin | Capture camera + mic, encode, stream over USB, apply settings |
+| Windows receiver | Go (stdlib only) | Connect, decode, scale, feed the camera and mic, tray and settings page |
+| `macawlink_native.dll` | C++ | Virtual camera media source, H.264/HEVC decoder, WASAPI output (what Go can't do) |
 
 ---
 
 ## 1. Big picture
 
 ```
-┌──────────────────────── ANDROID (Kotlin) ────────────────────────┐
-│                                                                  │
-│  CameraX/Camera2 ──Surface──▶ MediaCodec H.264/HEVC encoder ─┐   │
-│                                                              │   │
-│  AudioRecord (VOICE_COMMUNICATION, AEC/NS) ─▶ Opus or PCM ───┤   │
-│                                                              ▼   │
-│  Settings store ◀──── control msgs ────▶  Transport (mux/framing)│
-│  (DataStore)                              USB (adb) | Wi-Fi TLS   │
-└──────────────────────────────────────────────────┬───────────────┘
-                                                   │ TCP, 1 connection,
-                                                   │ multiplexed channels
-┌──────────────────────── WINDOWS (Go) ────────────▼───────────────┐
-│                                                                  │
-│  Transport ──▶ Demux ──┬─▶ Video: jitter buf ▶ decoder ▶ scaler  │
-│      ▲                 │        (FFmpeg/D3D11VA)  ▶ NV12 frames ─┼─▶ Frame ring (shared memory)
-│      │                 │                                         │         │
-│  Discovery (mDNS)      └─▶ Audio: jitter buf ▶ Opus dec ▶ resample┼─▶ WASAPI render ─▶ virtual mic endpoint
-│  Pairing (QR/PIN)                                                │         │
-│  Tray UI + settings ── control msgs ──▶ phone                    │         │
-└──────────────────────────────────────────────────────────────────┘         │
-        ┌───────────────────────────────────────────────────────────────────┘
-        ▼                                              ▼
- vcam-native (C++ DLL, Media Foundation          vmic driver (WDM audio, SYSVAD-based)
- virtual camera, registered by the Go service)   exposes "Macawlink Microphone"
-        ▼                                              ▼
- Zoom / Teams / OBS see "Macawlink Camera"      Apps see "Macawlink Microphone"
+┌──────────────────────────── ANDROID (Kotlin) ─────────────────────────────┐
+│ Camera2 ──Surface──▶ MediaCodec H.264/HEVC ──▶ VIDEO_CONFIG / VIDEO_FRAME  │
+│ AudioRecord (VOICE_COMMUNICATION + AEC/NS/AGC) ─▶ PCM ─▶ AUDIO_FRAME       │
+│ OrientationEventListener ─▶ rotation in VIDEO_CONFIG                       │
+│ SessionHub.settings ◀── UI ── SET_CONFIG ──▶ camera/audio restart ─▶ CONFIG_STATE │
+│ StreamService (FGS camera|microphone) ── PcLink: 127.0.0.1:47800 ──┐       │
+└────────────────────────────────────────────────────────────────────┼───────┘
+                                                  USB cable, `adb forward`
+┌──────────────────────────── WINDOWS (Go) ──────────────────────────┼───────┐
+│ app.connLoop: find adb ▶ list devices ▶ forward ▶ dial ▶ HELLO ◀───┘       │
+│   ├─ video.Pipeline: MF decoder (DLL) ▶ rotate ▶ crop/scale to app size ─┐  │
+│   ├─ audio.Pipeline: PCM ▶ gain ▶ WASAPI (DLL) ▶ "CABLE Input" ──────────┼──┼─▶ apps record "CABLE Output"
+│   ├─ ping/RTT, phone stats, live SET_CONFIG                              │  │
+│ tray (Win32) + settings page http://127.0.0.1:47801                      │  │
+└──────────────────────────────────────────────────────────────────────────┼──┘
+                     shared-memory ring  Global\Macawlink.Video (NV12 × 3) ▼
+┌──────── macawlink_native.dll inside Windows Frame Server ────────────────────┐
+│ IMFActivate ▶ MkSource (IMFMediaSourceEx) ▶ MkStream (IMFMediaStream2)        │
+│ paces samples at the negotiated fps; copies the newest frame, or a           │
+│ “waiting for phone” card when no phone is streaming                          │
+└────────────────────────────────▶ Teams / Zoom / OBS see “Macawlink Camera” ───┘
 ```
-
-**Key decision:** the Go process does everything that is not a driver. Windows only
-accepts cameras and microphones through COM media sources and kernel audio drivers, which
-Go cannot produce, so those two pieces are small native shims with one job each:
-read frames/samples that Go hands them and present them to Windows.
 
 ---
 
-## 2. How "it looks like I plugged in a camera and mic"
+## 2. How “it looks like I plugged in a camera and mic”
 
-### 2.1 Virtual camera — `windows/vcam-native` (C++)
+### 2.1 Virtual camera (`windows/native`)
+- **Windows 11 Media Foundation virtual camera** (`MFCreateVirtualCamera`). It is a user-mode COM DLL with no kernel driver and no driver signing, and it shows up in every app, including the Windows Camera app.
+- The DLL is registered in **HKLM** once (installer, admin). Frame Server runs as LOCAL SERVICE and cannot see HKCU.
+- `macawlink.exe` calls `mk_vcam_start` at launch (session lifetime, current user), so the camera exists while the tray app runs.
+- Formats offered (NV12): 1280×720@30 (default), 1920×1080@30, 640×480@30, 1280×720@60, 1920×1080@60.
+- **Frame hand-off:** the DLL (consumer) creates `Global\Macawlink.Video` with a DACL for the user, LOCAL SERVICE and app containers. If it can't create Global objects it falls back to `Local\`. Go (producer) opens it.
+  - The 256-byte header holds the latest slot, the per-slot size and pts, the `connected` flag, and the format the app opened (`reqWidth/Height/Fps`).
+  - Layout is pinned by `static_assert`s in `ring.h` and by `vcam_test.go`.
+- Go scales to exactly what the app opened. The DLL does nearest-neighbour as a stop-gap during format switches.
+- No phone → the DLL renders a violet card with a moving cyan scan line. Apps never lose the device mid-call.
+- The DLL also implements `IMFSampleAllocatorControl` (uses the pipeline's allocator when given) and `IKsControl` stubs, as Frame Server expects.
 
-| Option | Works in | Notes |
-|---|---|---|
-| **A. Media Foundation Virtual Camera** (`MFCreateVirtualCamera`) — **chosen** | Windows 11 (build 22000+) | Official API. Shows up in *every* app incl. the Windows Camera app and UWP. No driver signing needed — it is a user-mode COM DLL. Registered by the Go service at start, removed on exit (or kept with `MFVirtualCameraLifetime_System`). |
-| B. DirectShow source filter (softcam-style) — **fallback** | Windows 10 + 11 | Seen by DirectShow apps (Zoom, OBS, Chrome) but **not** by MF-only apps (Windows Camera, some UWP). Use only for Win10 users. |
-| C. AVStream kernel driver | All | Needs kernel driver + EV signing. Not worth it. |
-
-The DLL implements `IMFMediaSource` + `IMFMediaStream`. It advertises a **fixed menu of
-formats** (apps choose one when they open the camera):
-
-| Resolution | FPS | Pixel formats |
-|---|---|---|
-| 640×480 | 30 | NV12, YUY2 |
-| 1280×720 | 30, 60 | NV12, YUY2 |
-| 1920×1080 | 30, 60 | NV12, YUY2 |
-| 3840×2160 | 30 | NV12 |
-
-When an app opens, say, 1280×720@30 but the phone is sending 1920×1080, the Go scaler
-converts so the app always gets exactly what it asked for. When the phone is disconnected
-the camera stays present and shows a branded "Waiting for phone…" frame (no app crashes,
-no device disappearing mid-call).
-
-**Frame hand-off Go → DLL:** a named shared-memory ring buffer
-(`Local\Macawlink.Video`) with 3 slots + a header (`width, height, fourcc, stride,
-timestamp, seq`) and a named event `Local\Macawlink.Video.NewFrame`. Go writes, the DLL
-reads the newest slot. Zero sockets, zero copies beyond one memcpy. The Frame Server
-runs the DLL in a different session, so the objects are created with a security
-descriptor that allows `LOCAL SERVICE` read access (or under `Global\` from the service).
-
-### 2.2 Virtual microphone — `windows/vmic-driver`
-
-There is no user-mode API to create a recording device; it needs a WDM audio driver.
-
-| Phase | Approach | Device name apps see |
-|---|---|---|
-| **Phase 1 (MVP)** | Use an existing virtual cable (VB-Audio Virtual Cable). Go plays the phone audio into **"CABLE Input"** via WASAPI; apps pick **"CABLE Output"** as mic. Installer detects it and links the user to download it (its licence does not allow bundling). | CABLE Output |
-| **Phase 2 (target)** | Own driver forked from Microsoft's **SYSVAD** sample, stripped to one capture endpoint + one hidden render endpoint (loopback pair). Go writes into the hidden render side; the capture side appears as **"Macawlink Microphone"**. | Macawlink Microphone |
-
-Phase 2 requires an **EV code-signing certificate** and Microsoft **attestation signing**
-through the Partner Center (Windows 10/11 refuse unsigned kernel drivers). Budget for the
-certificate yearly. Everything else in the system is independent of which phase is active:
-the Go side only talks to "an output endpoint by ID".
+### 2.2 Virtual microphone (`windows/vmic-driver`)
+- **Now:** VB-Audio Virtual Cable. Go renders PCM into *CABLE Input* via WASAPI shared mode with auto format conversion; apps record *CABLE Output*.
+- **Phase 3:** a SYSVAD-based driver exposing **“Macawlink Microphone”**. It needs an EV certificate plus Microsoft attestation signing. `audio.Endpoints` already prefers it when present, so no code change is needed.
 
 ---
 
-## 3. Android sender (Kotlin)
-
-### 3.1 Modules
+## 3. Android sender
 
 ```
-android/app/src/main/java/com/macawlink/
-├── MacawlinkApp.kt              Application, DI wiring
-├── ui/                          Jetpack Compose: Home, Settings, Pairing (QR scan), Preview
-├── service/StreamService.kt     Foreground service (type camera|microphone), owns the session
-├── capture/
-│   ├── CameraPipeline.kt        CameraX → encoder input Surface; lens switch, torch, zoom, focus
-│   └── AudioPipeline.kt         AudioRecord + AEC/NS/AGC → encoder or raw PCM
-├── codec/
-│   ├── VideoEncoder.kt          MediaCodec async, H.264 (baseline/high) or HEVC, CBR/VBR
-│   └── AudioEncoder.kt          MediaCodec Opus (API 29+) or PCM passthrough
-├── transport/
-│   ├── Transport.kt             interface: connect, send(frame), incoming control flow
-│   ├── UsbTransport.kt          listens on localhost:port; PC reaches it via `adb forward`
-│   └── WifiTransport.kt         TLS client to PC, found via mDNS (NsdManager)
-├── protocol/                    Packet framing, message types (mirrors docs/PROTOCOL.md)
-└── settings/StreamSettings.kt   Data class + DataStore persistence
+com.macawlink
+├── MacawlinkApp            loads saved settings into SessionHub
+├── session/SessionHub      StateFlows: settings (single source of truth) + link state
+├── service/StreamService   FGS camera|microphone, wake lock; accept loop; one PC session at a time
+├── transport/PcLink        loopback ServerSocket; Connection = writer thread + bounded video queue
+├── capture/CameraController Camera2 → encoder Surface; fps range, torch, zoom, stabilization; rotation
+├── capture/AudioCapture    AudioRecord PCM s16le in 10/20 ms frames + AEC/NS/AGC effects
+├── codec/VideoEncoder      MediaCodec async, realtime priority, no B-frames, live bitrate, keyframe on request
+├── protocol/               Packet framing + JSON messages (golden-tested against Go)
+├── settings/               StreamSettings (+ presets) and SharedPreferences store
+└── ui/MainActivity         Compose: status, start/stop, presets, video and audio settings
 ```
+- Camera and mic are opened **only while a PC is connected**.
+- Settings changed in the UI or by `SET_CONFIG` both land in `SessionHub.settings`.
+  - The service applies the diff: bitrate, torch, zoom and stabilization update live; size, fps, codec and lens restart the encoder.
+  - It then answers with `CONFIG_STATE`.
+- Congestion: once >3 MB is queued, video frames are dropped until the next keyframe, which is requested immediately. Audio is never dropped on the phone.
+- If HEVC is unavailable on the device, it falls back to H.264.
+- Size picking: an exact match first, then the nearest size with the same aspect ratio, then the nearest area. FPS: an exact `[n,n]` range first.
+- The PC can launch the app with `am start … --ez autostart true` once per plug-in.
 
-### 3.2 Capture and encode
-
-- **Video:** CameraX `Preview` + an encoder `Surface` (via `Preview.SurfaceProvider` or a
-  Camera2 session if manual exposure/focus is needed). MediaCodec in **async mode**,
-  `KEY_LATENCY=0`, `KEY_PRIORITY=0` (realtime), I-frame interval 2 s, `PARAMETER_KEY_REQUEST_SYNC_FRAME`
-  when the PC asks (new app opened the camera, packet loss).
-- **Audio:** `AudioRecord` with `VOICE_COMMUNICATION` source (gets hardware echo
-  cancellation / noise suppression on most phones), 10 ms or 20 ms frames.
-- **Orientation:** sensor rotation is sent as metadata; the PC rotates, so the encoder
-  never restarts when the phone is turned.
-- **Lifecycle:** foreground service with `foregroundServiceType="camera|microphone"`
-  (mandatory on Android 14+), persistent notification with Stop / Switch lens / Mute.
-  Screen can be turned off while streaming (keeps camera via service + wake lock).
-
-### 3.3 Permissions
-`CAMERA`, `RECORD_AUDIO`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_CAMERA`,
-`FOREGROUND_SERVICE_MICROPHONE`, `POST_NOTIFICATIONS`, `INTERNET`,
-`ACCESS_NETWORK_STATE`, `CHANGE_WIFI_MULTICAST_STATE` (mDNS), `WAKE_LOCK`.
-
-Min SDK 29 (Android 10: Opus encoder, modern camera APIs). Target latest.
-
----
-
-## 4. Windows receiver (Go)
-
-### 4.1 Packages
+## 4. Windows receiver
 
 ```
 windows/
-├── cmd/macawlink/main.go        Entry: tray app + service loop
-├── internal/
-│   ├── config/                  Settings (JSON in %APPDATA%\Macawlink), validation, presets
-│   ├── discovery/               mDNS advertiser (_macawlink._tcp), adb device watcher
-│   ├── transport/               TCP/TLS listener, USB via `adb forward`, reconnect logic
-│   ├── protocol/                Framing + message types (mirrors docs/PROTOCOL.md)
-│   ├── session/                 One phone session: demux, stats, control loop
-│   ├── video/                   Jitter buffer, decoder (FFmpeg via go-astiav, D3D11VA), scaler, rotate
-│   ├── audio/                   Jitter buffer, Opus decode, resampler, WASAPI render
-│   ├── vcam/                    Shared-memory frame ring + MFCreateVirtualCamera registration
-│   ├── vmic/                    Picks the target endpoint (Macawlink driver or CABLE Input)
-│   └── ui/                      Tray icon + settings window
-├── vcam-native/                 C++ MF media source DLL (see 2.1)
-└── vmic-driver/                 Phase 2 SYSVAD-based driver (see 2.2)
+├── cmd/macawlink      tray app; --install / --uninstall; --addr (direct TCP); --serial
+├── cmd/fakephone      phone emulator for testing without a device
+├── internal/app       connection loop, session, status, settings API
+├── internal/video     pipeline + NV12 rotate / crop-scale (bilinear, mirror)
+├── internal/audio     pipeline: PCM, gain, latency window (drop >120 ms, pad on underrun), level meter
+├── internal/vcam      shared-memory ring writer
+├── internal/native    syscall bindings to macawlink_native.dll (no cgo)
+├── internal/transport adb discovery/forward/launch, dial + HELLO handshake
+├── internal/web       settings page + JSON API (localhost-only, header-guarded POSTs)
+├── internal/tray      Shell_NotifyIcon tray icon and menu (pure Win32)
+├── internal/install   elevate, copy to Program Files, DllRegisterServer, Start menu shortcut
+└── native/            the C++ DLL (cross-compiled with zig: `native/build.sh`)
 ```
+- The Go module has **no third-party dependencies**. Windows APIs go through `syscall`. Media Foundation and WASAPI COM work lives in the DLL behind a small C API.
+- Threads: the network reader feeds a video worker (bounded queue; overflow flushes and resyncs on a keyframe) and an audio worker (drop-oldest). There is also a 1 Hz ping/RTT and a ring watcher that requests a keyframe when an app opens the camera.
 
-### 4.2 Library choices
+## 5. Tweaking quality
 
-| Need | Choice | Why |
-|---|---|---|
-| H.264/HEVC decode | **go-astiav** (FFmpeg bindings) with D3D11VA hw decode | Mature, hardware decode on Intel/AMD/NVIDIA, software fallback |
-| Opus decode | `gopkg.in/hraban/opus.v2` (libopus) | Standard |
-| WASAPI | `github.com/moutend/go-wca` | Pure-Go COM bindings for audio endpoints |
-| COM / MF calls | `github.com/go-ole/go-ole` + `golang.org/x/sys/windows` | Register the virtual camera, shared memory, events |
-| mDNS | `github.com/grandcat/zeroconf` | Advertise `_macawlink._tcp` |
-| Tray + window | `fyne.io/systray` + Fyne (or Wails if a web UI is preferred) | Single binary |
-| Build | cgo with MinGW-w64 / MSYS2; installer via WiX or Inno Setup | Needs to register DLL + (Phase 2) driver |
+Changeable from the phone, the tray (presets, lens) or the settings page. All changes apply live.
 
-### 4.3 Threading model
+| Video | Values |
+|---|---|
+| Resolution | 640×480, 1280×720, 1920×1080 |
+| Frame rate | 15, 24, 30, 60 (device permitting) |
+| Bitrate | Auto (~0.1 bpp) or 1.5–40 Mbps; CBR/VBR |
+| Codec | H.264, HEVC |
+| Camera | back / front, zoom 1–5×, torch, stabilization, mirror (PC side) |
 
-One goroutine per concern, connected by bounded channels (drop-oldest for video, never
-block the network reader):
+| Audio | Values |
+|---|---|
+| Sample rate | 16, 24, 32, 44.1, 48 kHz |
+| Channels | mono, stereo |
+| Packet | 10 or 20 ms |
+| Processing | echo cancellation, noise suppression, auto gain (phone); gain −20…+20 dB (PC) |
 
-```
-netReader ─▶ demux ─┬─▶ videoJitter ─▶ decode ─▶ scale ─▶ vcamWriter (shared mem)
-                    ├─▶ audioJitter ─▶ opusDec ─▶ resample ─▶ wasapiWriter
-                    └─▶ controlHandler ◀──▶ ui
-```
+Presets: **Low** (480p30, 1.5 Mbps, 16 kHz), **Meeting** (720p30 auto, 48 kHz mono), **Max** (1080p60 20 Mbps VBR, 48 kHz stereo raw).
 
----
+## 6. Connection
+- **USB (Phase 1):** the phone listens on loopback `127.0.0.1:47800` only, so nothing is exposed on the network. The PC runs the bundled `adb forward`.
+- **Wi-Fi (Phase 2):** mDNS `_macawlink._tcp`, QR pairing, TLS 1.3 with certificate pinning, Opus audio.
 
-## 5. Tweaking audio and video quality
-
-Settings can be changed **from either the phone or the PC tray**; both send the same
-`SET_CONFIG` message and the phone is the source of truth (it is the one encoding).
-Changes apply live — the phone reconfigures its encoder, sends a new `VIDEO_CONFIG`
-(SPS/PPS), and the PC re-initialises its decoder without dropping the virtual device.
-
-### Video
-| Setting | Values | Default |
-|---|---|---|
-| Resolution | 640×480, 1280×720, 1920×1080, 2560×1440, 3840×2160 (filtered by phone capability) | 1280×720 |
-| Frame rate | 15, 24, 30, 60 | 30 |
-| Codec | H.264, HEVC | H.264 |
-| Bitrate | 1–40 Mbps, or *Auto* (adapts to RTT / loss) | Auto |
-| Rate control | CBR, VBR | CBR |
-| Lens | Back main / wide / front | Back |
-| Extras | Mirror, rotation lock, zoom, torch, focus lock, exposure compensation, stabilisation | — |
-
-### Audio
-| Setting | Values | Default |
-|---|---|---|
-| Sample rate | 16, 24, 32, 44.1, 48 kHz | 48 kHz |
-| Channels | Mono, Stereo (if phone has 2 mics) | Mono |
-| Codec | Opus, PCM 16-bit (USB only; ~1.5 Mbps stereo 48 k) | Opus |
-| Opus bitrate | 16–256 kbps | 96 kbps |
-| Frame size | 10, 20 ms | 10 ms |
-| Processing | Echo cancel, noise suppress, auto gain (each toggle) | On |
-| PC gain | −20 to +20 dB | 0 |
-
-**Presets** for quick switching: *Low bandwidth* (480p30, 1.5 Mbps, Opus 32 k),
-*Meeting* (720p30, Auto, Opus 96 k), *Max quality* (1080p60 HEVC 20 Mbps, PCM over USB).
-
----
-
-## 6. Connection modes
-
-| Mode | How | Latency target |
-|---|---|---|
-| **USB** | PC runs `adb forward tcp:47800 tcp:47800` (bundled adb, USB debugging on) and connects to the phone | < 60 ms glass-to-app |
-| **Wi-Fi** | PC advertises `_macawlink._tcp` via mDNS; phone connects with TLS 1.3 | < 120 ms on 5 GHz |
-| Wi-Fi manual | User types PC IP if mDNS is blocked | same |
-
-**Pairing (Wi-Fi):** the PC shows a QR code holding `{host, port, cert fingerprint,
-one-time token}`. The phone scans it, connects, pins the PC certificate, and both store a
-long-lived pairing key. Unpaired devices are rejected. USB is trusted by adb
-authorisation.
-
-**Why one TCP connection instead of UDP/WebRTC:** simpler, works through adb, and on a LAN
-the latency cost is small if Nagle is off and queues are drop-oldest. QUIC (datagrams for
-media, stream for control) is the Phase 3 upgrade path for lossy Wi-Fi.
-
----
-
-## 7. A/V sync and latency
-
-- Phone stamps every video and audio packet with a capture timestamp from one monotonic
-  clock (`CLOCK_MONOTONIC`, i.e. `System.nanoTime()` — the base MediaCodec uses for Surface timestamps).
-- PC estimates the phone→PC clock offset with periodic `PING/PONG`.
-- **Audio is the master clock.** Video frames are presented when their timestamp matches the
-  audio playout position (±1 frame); late frames are dropped, never queued.
-- Jitter buffers: audio 20–60 ms adaptive, video 0–2 frames.
-- If an app opens the camera mid-stream, PC requests a keyframe so the first image appears instantly.
-
----
+## 7. Latency and sync
+- Low-latency MediaCodec settings, no B-frames, a realtime-priority encoder, `CODECAPI_AVLowLatencyMode` on the decoder, and TCP_NODELAY on both ends.
+- Video is shown as soon as it is decoded; the camera paces delivery at the negotiated fps.
+- Audio keeps 10–120 ms queued in WASAPI. If the phone clock drifts, packets are dropped or padded.
+- Timestamps are carried end-to-end for the Phase 2 A/V sync work.
 
 ## 8. Failure handling
-
 | Event | Behaviour |
 |---|---|
-| Phone disconnects / locks | Virtual camera shows "Waiting for phone…" frame; mic outputs silence. Devices never disappear. Auto-reconnect with backoff. |
-| Wi-Fi congestion | Auto bitrate steps down (RTT + send-queue depth), then fps, then resolution |
-| Phone overheating | Android thermal API → notify PC, step quality down |
-| Incoming call on phone | Audio focus lost → mute + banner on PC tray |
-| Second phone | Rejected in v1 (one session); multi-camera is roadmap |
-
----
+| Phone unplugged / app stopped | Camera shows the waiting card, mic goes silent, PC retries every ~2 s |
+| USB-debugging not authorised | Tray says “Tap Allow USB debugging” |
+| App not running on phone | PC launches it once per plug-in |
+| Link congested | Phone drops to next keyframe; PC flushes and resyncs |
+| HEVC decoder missing on PC | PC switches the phone to H.264 |
+| No virtual mic installed | Settings page explains; retried every 5 s |
 
 ## 9. Security
-- Wi-Fi traffic is TLS 1.3 with certificate pinning from pairing; no cloud relay, LAN only.
-- The service listens only on the chosen interface; firewall rule scoped to private networks.
-- The phone shows a persistent notification and the camera indicator dot whenever it streams.
+- USB only: phone socket bound to loopback; PC settings page bound to 127.0.0.1.
+- The settings page rejects foreign `Host` headers (DNS rebinding) and POSTs without `X-Macawlink: 1` (cross-site).
+- The phone shows a persistent notification while streaming, and Android's camera/mic indicators apply.
 
----
-
-## 10. Repository layout
-
-```
-Macawlink/
-├── README.md
-├── assets/icon/            macawlink.svg (+ PNG/ICO renders), Android adaptive icon source
-├── docs/
-│   ├── ARCHITECTURE.md     this file
-│   ├── PROTOCOL.md         wire format
-│   └── ROADMAP.md          phases and milestones
-├── android/                Kotlin app (Gradle)
-└── windows/                Go module + vcam-native (C++) + vmic-driver
-```
-
-## 11. Platform requirements
-
+## 10. Requirements
 | | Minimum |
 |---|---|
 | Android | 10 (API 29) |
-| Windows | 11 (22000+) for the full virtual camera; Windows 10 via DirectShow fallback |
-| PC GPU | Any D3D11 GPU for hardware decode; CPU decode works up to 1080p30 |
+| Windows | 11 (22000+) for the camera; the mic path also works on Windows 10 |
+| PC | any x64; hardware-accelerated decode used when the MF decoder provides it |

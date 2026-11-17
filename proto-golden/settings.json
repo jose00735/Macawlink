@@ -1,0 +1,1 @@
+{"video":{"width":1280,"height":720,"fps":30,"codec":"h264","bitrate_kbps":0,"rate_control":"cbr","lens":"back","mirror":false,"stabilization":true,"torch":false,"zoom":1.0},"audio":{"enabled":true,"codec":"pcm","sample_rate":48000,"channels":1,"frame_ms":10,"aec":true,"ns":true,"agc":true,"gain_db":0}}

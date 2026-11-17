@@ -2,16 +2,18 @@
 <resources>
     <string name="app_name">Macawlink</string>
     <string name="notif_channel">Streaming</string>
+    <string name="notif_waiting">Waiting for your PC — plug in by USB</string>
     <string name="notif_streaming">Streaming camera and mic to your PC</string>
+    <string name="notif_streaming_to">Streaming to %1$s</string>
     <string name="action_stop">Stop</string>
 
     <color name="ic_launcher_background">#0D0522</color>
-    <!-- cyberpunk palette (matches assets/icon/macawlink.svg) -->
-    <color name="neon_cyan">#00F0FF</color>
-    <color name="neon_magenta">#FF2BD6</color>
-    <color name="neon_violet">#7B2CFF</color>
+    <!-- palette (matches assets/icon/macawlink.svg); UI colours live in MainActivity.kt -->
     <color name="deep_violet">#0D0522</color>
-    <color name="gunmetal">#1D2033</color>
 
-    <style name="Theme.Macawlink" parent="android:Theme.Material.NoActionBar" />
+    <style name="Theme.Macawlink" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/deep_violet</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
 </resources>

@@ -11,10 +11,35 @@ android {
 
     defaultConfig {
         applicationId = "com.macawlink"
-        minSdk = 29          // Android 10: MediaCodec Opus encoder, modern camera stack
+        minSdk = 29          // Android 10: Camera2 SessionConfiguration, MediaCodec B-frame control, thermal API
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+    }
+
+    signingConfigs {
+        // Release builds are signed with the debug key unless a keystore is configured
+        // (set MACAWLINK_KEYSTORE / _PASSWORD / _ALIAS in the environment).
+        create("release") {
+            val ks = System.getenv("MACAWLINK_KEYSTORE")
+            if (ks != null) {
+                storeFile = file(ks)
+                storePassword = System.getenv("MACAWLINK_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("MACAWLINK_KEY_ALIAS")
+                keyPassword = System.getenv("MACAWLINK_KEYSTORE_PASSWORD")
+            } else {
+                initWith(getByName("debug"))
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.getByName("release")
+        }
     }
 
     buildFeatures { compose = true }
@@ -26,20 +51,14 @@ android {
 }
 
 dependencies {
-    val camerax = "1.4.1"
-    implementation("androidx.camera:camera-core:$camerax")
-    implementation("androidx.camera:camera-camera2:$camerax")
-    implementation("androidx.camera:camera-lifecycle:$camerax")
-    implementation("androidx.camera:camera-view:$camerax")
-
     implementation("androidx.core:core-ktx:1.15.0")
-    implementation("androidx.lifecycle:lifecycle-service:2.8.7")
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))
     implementation("androidx.compose.material3:material3")
-    implementation("androidx.datastore:datastore-preferences:1.1.1")
+    implementation("androidx.compose.foundation:foundation")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
-    // QR pairing (Phase 2)
-    implementation("com.google.mlkit:barcode-scanning:17.3.0")
+    testImplementation("junit:junit:4.13.2")
 }
+
+android.testOptions.unitTests.isReturnDefaultValues = true
