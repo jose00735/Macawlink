@@ -4,5 +4,6 @@ package vcam
 
 import "errors"
 
-// OpenRing is Windows-only; tests use NewRingFromMemory.
-func OpenRing() (*Ring, error) { return nil, errors.New("vcam: Windows only") }
+// OpenGlobal and CreateLocal are Windows-only; tests use NewRingFromMemory.
+func OpenGlobal() (*Ring, error)  { return nil, errors.New("vcam: Windows only") }
+func CreateLocal() (*Ring, error) { return nil, errors.New("vcam: Windows only") }

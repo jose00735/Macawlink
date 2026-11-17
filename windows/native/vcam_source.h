@@ -1,6 +1,7 @@
 #pragma once
 #include "common.h"
 #include "ring.h"
+#include "ring_reader.h"
 
 class MkStream;
 
@@ -102,8 +103,6 @@ private:
     void Worker();
     HRESULT Deliver(IUnknown* token);
     HRESULT MakeSample(IMFSample** out);
-    void FillFrame(BYTE* y, LONG pitch, BYTE* uv, UINT32 w, UINT32 h);
-    bool OpenRing();
 
     volatile LONG ref_ = 1;
     SRWLOCK lock_ = SRWLOCK_INIT;
@@ -127,7 +126,5 @@ private:
     uint64_t frameNo_ = 0;
 
     // shared memory from the Go receiver
-    HANDLE ringMap_ = nullptr;
-    BYTE* ring_ = nullptr;
-    ULONGLONG lastRingTry_ = 0;
+    MkRingReader ring_{MkRingReader::kGlobalFirst};
 };

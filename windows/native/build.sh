@@ -6,10 +6,12 @@ cd "$(dirname "$0")"
 ZIG="${ZIG:-python3 -m ziglang}"
 OUT="${1:-../dist}"
 mkdir -p "$OUT"
-$ZIG c++ -target x86_64-windows-gnu -shared -O2 -std=c++17 \
-  -fno-exceptions -fno-rtti -Wall -Wno-unknown-pragmas -Wno-unused-function \
-  -DUNICODE -D_UNICODE \
-  exports.cpp vcam_source.cpp decoder.cpp audio.cpp macawlink_native.def \
-  -lole32 -loleaut32 -lmfplat -lmf -lmfuuid -ladvapi32 -luser32 -lpropsys \
-  -o "$OUT/macawlink_native.dll"
+SRC="exports.cpp vcam_source.cpp ring_reader.cpp dshow_filter.cpp decoder.cpp audio.cpp"
+FLAGS="-shared -O2 -std=c++17 -fno-exceptions -fno-rtti -Wall -Wno-unknown-pragmas -Wno-unused-function -DUNICODE -D_UNICODE"
+LIBS="-lole32 -loleaut32 -lmfplat -lmf -lmfuuid -ladvapi32 -luser32 -lpropsys -lwinmm"
+# 64-bit: used by macawlink.exe, Frame Server and 64-bit apps (Chrome, Edge, Teams, Zoom, OBS).
+$ZIG c++ -target x86_64-windows-gnu $FLAGS $SRC macawlink_native.def $LIBS -o "$OUT/macawlink_native.dll"
 echo "built $OUT/macawlink_native.dll"
+# 32-bit: only so 32-bit apps on Windows 10 can see the DirectShow camera.
+$ZIG c++ -target x86-windows-gnu $FLAGS $SRC macawlink_native32.def $LIBS -o "$OUT/macawlink_native32.dll"
+echo "built $OUT/macawlink_native32.dll"

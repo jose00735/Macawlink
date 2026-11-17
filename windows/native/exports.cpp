@@ -160,8 +160,21 @@ private:
     MkSource* source_ = nullptr;
 };
 
+HRESULT MkCreateDsFilter(REFIID riid, void** ppv);
+HRESULT MkRegisterDsCategory(bool add);
+extern const GUID MK_CLSID_DShowFilter;
+extern "C" __declspec(dllexport) int __stdcall mk_vcam_supported();
+
+static HRESULT CreateActivate(REFIID riid, void** ppv) {
+    MkActivate* a = new MkActivate();
+    HRESULT hr = a->QueryInterface(riid, ppv);
+    a->Release();
+    return hr;
+}
+
 class MkFactory final : public IClassFactory {
 public:
+    explicit MkFactory(HRESULT (*create)(REFIID, void**)) : create_(create) {}
     STDMETHODIMP QueryInterface(REFIID riid, void** ppv) override {
         if (!ppv) return E_POINTER;
         if (riid == __uuidof(IUnknown) || riid == __uuidof(IClassFactory)) {
@@ -177,35 +190,37 @@ public:
     STDMETHODIMP CreateInstance(IUnknown* outer, REFIID riid, void** ppv) override {
         if (outer) return CLASS_E_NOAGGREGATION;
         MkEnsureCom();
-        MkActivate* a = new MkActivate();
-        HRESULT hr = a->QueryInterface(riid, ppv);
-        a->Release();
-        return hr;
+        return create_(riid, ppv);
     }
     STDMETHODIMP LockServer(BOOL lock) override {
         if (lock) InterlockedIncrement(&g_objects); else InterlockedDecrement(&g_objects);
         return S_OK;
     }
+
+private:
+    HRESULT (*create_)(REFIID, void**);
 };
-static MkFactory g_factory;
+static MkFactory g_mfFactory(CreateActivate);
+static MkFactory g_dsFactory(MkCreateDsFilter);
 
 extern "C" HRESULT __stdcall DllGetClassObject(REFCLSID clsid, REFIID riid, void** ppv) {
-    if (clsid != MK_CLSID_MediaSource) return CLASS_E_CLASSNOTAVAILABLE;
-    return g_factory.QueryInterface(riid, ppv);
+    if (clsid == MK_CLSID_MediaSource) return g_mfFactory.QueryInterface(riid, ppv);
+    if (clsid == MK_CLSID_DShowFilter) return g_dsFactory.QueryInterface(riid, ppv);
+    return CLASS_E_CLASSNOTAVAILABLE;
 }
 
 extern "C" HRESULT __stdcall DllCanUnloadNow() { return g_objects == 0 ? S_OK : S_FALSE; }
 
 // HKLM registration: Frame Server runs as LOCAL SERVICE and cannot see the user's HKCU.
-static const wchar_t* kClsidKey = L"SOFTWARE\\Classes\\CLSID\\" MK_CLSID_STRING;
+// A 32-bit build registered by SysWOW64\regsvr32 lands in the 32-bit view automatically.
+#define MK_DSHOW_CLSID_STRING L"{6E0D1A3B-6F2C-4C1E-9B7A-4D61434157B2}"
 
-extern "C" HRESULT __stdcall DllRegisterServer() {
-    wchar_t path[MAX_PATH];
-    if (!GetModuleFileNameW(g_module, path, MAX_PATH)) return HRESULT_FROM_WIN32(GetLastError());
+static HRESULT RegisterClass(const wchar_t* clsid, const wchar_t* name, const wchar_t* path) {
+    wchar_t key[128] = L"SOFTWARE\\Classes\\CLSID\\";
+    wcscat(key, clsid);
     HKEY k = nullptr, inproc = nullptr;
-    LONG r = RegCreateKeyExW(HKEY_LOCAL_MACHINE, kClsidKey, 0, nullptr, 0, KEY_WRITE, nullptr, &k, nullptr);
+    LONG r = RegCreateKeyExW(HKEY_LOCAL_MACHINE, key, 0, nullptr, 0, KEY_WRITE, nullptr, &k, nullptr);
     if (r != ERROR_SUCCESS) return HRESULT_FROM_WIN32(r);
-    const wchar_t* name = L"Macawlink Camera Source";
     RegSetValueExW(k, nullptr, 0, REG_SZ, (const BYTE*)name, (DWORD)((wcslen(name) + 1) * 2));
     r = RegCreateKeyExW(k, L"InprocServer32", 0, nullptr, 0, KEY_WRITE, nullptr, &inproc, nullptr);
     if (r == ERROR_SUCCESS) {
@@ -218,9 +233,46 @@ extern "C" HRESULT __stdcall DllRegisterServer() {
     return HRESULT_FROM_WIN32(r);
 }
 
+static void UnregisterClass(const wchar_t* clsid) {
+    wchar_t key[128] = L"SOFTWARE\\Classes\\CLSID\\";
+    wcscat(key, clsid);
+    RegDeleteTreeW(HKEY_LOCAL_MACHINE, key);
+}
+
+// Registers both camera front-ends. The DirectShow device only goes into the video input
+// category when Windows lacks MF virtual cameras (Windows 10), so Windows 11 apps don't
+// see two "Macawlink Camera" entries.
+extern "C" HRESULT __stdcall DllRegisterServer() {
+    MkEnsureCom();
+    wchar_t path[MAX_PATH];
+    if (!GetModuleFileNameW(g_module, path, MAX_PATH)) return HRESULT_FROM_WIN32(GetLastError());
+    HRESULT hr = RegisterClass(MK_CLSID_STRING, L"Macawlink Camera Source", path);
+    if (FAILED(hr)) return hr;
+    hr = RegisterClass(MK_DSHOW_CLSID_STRING, L"Macawlink Camera", path);
+    if (FAILED(hr)) return hr;
+    if (mk_vcam_supported()) return MkRegisterDsCategory(false);
+    return MkRegisterDsCategory(true);
+}
+
 extern "C" HRESULT __stdcall DllUnregisterServer() {
-    LONG r = RegDeleteTreeW(HKEY_LOCAL_MACHINE, kClsidKey);
-    return (r == ERROR_SUCCESS || r == ERROR_FILE_NOT_FOUND) ? S_OK : HRESULT_FROM_WIN32(r);
+    MkEnsureCom();
+    MkRegisterDsCategory(false);
+    UnregisterClass(MK_CLSID_STRING);
+    UnregisterClass(MK_DSHOW_CLSID_STRING);
+    return S_OK;
+}
+
+// Which camera front-end this PC uses: 2 = Media Foundation virtual camera (Win11),
+// 1 = DirectShow filter (Win10), 0 = neither registered.
+extern "C" __declspec(dllexport) int __stdcall mk_camera_mode() {
+    HKEY k = nullptr;
+    if (mk_vcam_supported()) return 2;
+    if (RegOpenKeyExW(HKEY_CLASSES_ROOT,
+            L"CLSID\\{860BB310-5D01-11d0-BD3B-00A0C911CE86}\\Instance\\Macawlink Camera", 0, KEY_READ, &k) == ERROR_SUCCESS) {
+        RegCloseKey(k);
+        return 1;
+    }
+    return 0;
 }
 
 // ===========================================================================

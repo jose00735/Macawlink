@@ -35,7 +35,7 @@ type Stats struct {
 
 type Pipeline struct {
 	NewDecoder      func(codec int) (native.Decoder, error)
-	Sink            func() Sink // may return nil while the camera ring is not open yet
+	Sinks           func() []Sink // every open camera ring (Windows 11 + Windows 10 paths)
 	RequestKeyframe func()
 	OnCodecFailed   func(codec string) // e.g. HEVC extension missing → ask phone for H.264
 	Mirror          func() bool
@@ -163,16 +163,18 @@ func (p *Pipeline) drain() error {
 }
 
 func (p *Pipeline) output(nv12 []byte, w, h int, pts int64) {
-	var sink Sink
-	if p.Sink != nil {
-		sink = p.Sink()
+	var sinks []Sink
+	if p.Sinks != nil {
+		sinks = p.Sinks()
 	}
-	if sink == nil {
-		return
+	used := false
+	for _, s := range sinks {
+		if rw, _, _ := s.Requested(); rw > 0 {
+			used = true
+		}
 	}
-	rw, rh, _ := sink.Requested()
-	if rw == 0 || rh == 0 {
-		return // nobody has the camera open: skip the copy
+	if !used {
+		return // nobody has the camera open: skip the copies
 	}
 	mirror := p.Mirror != nil && p.Mirror()
 	if r := p.cfg.Rotation; r == 90 || r == 180 || r == 270 {
@@ -182,17 +184,28 @@ func (p *Pipeline) output(nv12 []byte, w, h int, pts int64) {
 		w, h = RotateNV12(p.rotated, nv12, w, h, r)
 		nv12 = p.rotated[:w*h*3/2]
 	}
-	out := nv12
-	if rw != w || rh != h || mirror {
-		if len(p.scaled) < rw*rh*3/2 {
-			p.scaled = make([]byte, rw*rh*3/2)
+	lastW, lastH := 0, 0
+	var out []byte
+	for _, s := range sinks {
+		rw, rh, _ := s.Requested()
+		if rw == 0 || rh == 0 {
+			continue
 		}
-		ScaleNV12(p.scaled, rw, rh, nv12, w, h, mirror)
-		out = p.scaled[:rw*rh*3/2]
-	}
-	p.stats.OutWidth, p.stats.OutHeight = rw, rh
-	if err := sink.Publish(out, rw, rh, pts); err != nil {
-		p.fail(err)
+		if rw != lastW || rh != lastH { // apps sharing a size share one scaled frame
+			out = nv12
+			if rw != w || rh != h || mirror {
+				if len(p.scaled) < rw*rh*3/2 {
+					p.scaled = make([]byte, rw*rh*3/2)
+				}
+				ScaleNV12(p.scaled, rw, rh, nv12, w, h, mirror)
+				out = p.scaled[:rw*rh*3/2]
+			}
+			lastW, lastH = rw, rh
+		}
+		p.stats.OutWidth, p.stats.OutHeight = rw, rh
+		if err := s.Publish(out, rw, rh, pts); err != nil {
+			p.fail(err)
+		}
 	}
 }
 

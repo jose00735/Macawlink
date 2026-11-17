@@ -25,6 +25,7 @@ var (
 	pAudQueued     *syscall.LazyProc
 	pAudClose      *syscall.LazyProc
 	pRegister      *syscall.LazyProc
+	pCameraMode    *syscall.LazyProc
 	pUnregister    *syscall.LazyProc
 )
 
@@ -46,6 +47,7 @@ func Load(dir string) error {
 	pDecCreate, pDecPush, pDecPull, pDecDestroy = p("mk_dec_create"), p("mk_dec_push"), p("mk_dec_pull"), p("mk_dec_destroy")
 	pAudOpen, pAudWrite, pAudQueued, pAudClose = p("mk_audio_open"), p("mk_audio_write"), p("mk_audio_queued"), p("mk_audio_close")
 	pRegister, pUnregister = p("DllRegisterServer"), p("DllUnregisterServer")
+	pCameraMode = p("mk_camera_mode")
 	return pVersion.Find()
 }
 
@@ -65,6 +67,15 @@ func VirtualCameraSupported() bool {
 	}
 	r, _, _ := pVcamSupported.Call()
 	return r == 1
+}
+
+// CameraMode reports which camera front-end this PC uses.
+func CameraMode() int {
+	if dll == nil {
+		return CameraNone
+	}
+	r, _, _ := pCameraMode.Call()
+	return int(r)
 }
 
 // StartVirtualCamera registers "Macawlink Camera" for this session.

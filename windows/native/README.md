@@ -5,6 +5,8 @@ One x64 DLL with everything Windows only exposes through COM:
 | Part | File | What it does |
 |---|---|---|
 | Virtual camera | `vcam_source.*`, `exports.cpp` | `IMFActivate` → `MkSource` (`IMFMediaSourceEx`, `IMFGetService`, `IKsControl`, `IMFSampleAllocatorControl`) → `MkStream` (`IMFMediaStream2`). Frame Server loads it for “Macawlink Camera”. It paces samples at the negotiated fps and copies frames from the shared ring (`ring.h`), or draws the waiting card. |
+| Windows 10 camera | `dshow_filter.cpp` | DirectShow capture filter (`IBaseFilter`, capture pin with `IAMStreamConfig` + `IKsPropertySet`) in the video input category; YUY2/NV12/I420; reads `Local\Macawlink.Video`. Registered only when the MF virtual camera is unavailable. |
+| Frame reader | `ring_reader.*` | Shared by both cameras: maps the ring, copies or scales the newest frame, draws the waiting card |
 | Camera lifetime | `exports.cpp` | `mk_vcam_supported/start/stop` wrap `MFCreateVirtualCamera` (loaded dynamically from `mfsensorgroup.dll`). `DllRegisterServer` writes HKLM. |
 | Decoder | `decoder.cpp` | `mk_dec_*`: Microsoft H.264/HEVC MFT in low-latency mode, output as tight NV12 |
 | Audio out | `audio.cpp` | `mk_audio_*`: WASAPI shared-mode render with auto PCM conversion, endpoint chosen by name |
@@ -14,7 +16,7 @@ Interfaces missing from mingw headers are declared in `common.h`. Their GUIDs we
 ## Build
 ```bash
 pip install ziglang
-./build.sh ../dist        # cross-compiles from Linux/macOS/Windows → macawlink_native.dll
+./build.sh ../dist        # → macawlink_native.dll (x64) + macawlink_native32.dll (x86, DirectShow for 32-bit apps)
 ```
 Dependencies are only system DLLs (ole32, mfplat, advapi32, user32, UCRT).
 

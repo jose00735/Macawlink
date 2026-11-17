@@ -11,3 +11,4 @@ func Register() error                                          { return ErrUnsup
 func Unregister() error                                        { return ErrUnsupported }
 func NewDecoder(codec int) (Decoder, error)                    { return nil, ErrUnsupported }
 func OpenAudio(names []string, rate, ch int) (AudioOut, error) { return nil, ErrUnsupported }
+func CameraMode() int                                          { return CameraNone }

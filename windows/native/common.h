@@ -88,3 +88,20 @@ struct MkLock {
 
 // Make sure COM + MF are initialised on whatever thread calls an export.
 void MkEnsureCom();
+
+// Monotonic time in 100 ns units (QueryPerformanceCounter).
+inline LONGLONG MkNow100ns() {
+    static LARGE_INTEGER freq = {};
+    if (!freq.QuadPart) QueryPerformanceFrequency(&freq);
+    LARGE_INTEGER c;
+    QueryPerformanceCounter(&c);
+    return (LONGLONG)((c.QuadPart / freq.QuadPart) * 10000000 + (c.QuadPart % freq.QuadPart) * 10000000 / freq.QuadPart);
+}
+
+// Raises the system timer resolution to 1 ms while a streaming thread runs.
+extern "C" __declspec(dllimport) UINT WINAPI timeBeginPeriod(UINT);
+extern "C" __declspec(dllimport) UINT WINAPI timeEndPeriod(UINT);
+struct MkHighResTimer {
+    MkHighResTimer() { timeBeginPeriod(1); }
+    ~MkHighResTimer() { timeEndPeriod(1); }
+};

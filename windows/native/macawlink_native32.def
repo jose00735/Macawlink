@@ -1,0 +1,8 @@
+LIBRARY macawlink_native32
+EXPORTS
+    DllGetClassObject = DllGetClassObject@12    PRIVATE
+    DllCanUnloadNow = DllCanUnloadNow@0         PRIVATE
+    DllRegisterServer = DllRegisterServer@0     PRIVATE
+    DllUnregisterServer = DllUnregisterServer@0 PRIVATE
+    mk_version = mk_version@0
+    mk_camera_mode = mk_camera_mode@0

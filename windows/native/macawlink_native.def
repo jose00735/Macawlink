@@ -8,6 +8,7 @@ EXPORTS
     mk_vcam_supported
     mk_vcam_start
     mk_vcam_stop
+    mk_camera_mode
     mk_dec_create
     mk_dec_push
     mk_dec_pull

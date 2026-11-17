@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +22,19 @@ import (
 
 const CLSID = "{6E0D1A3B-6F2C-4C1E-9B7A-4D61434157B1}"
 
+// DLL32 is the 32-bit build of the camera, registered so 32-bit apps on Windows 10 see it.
+const DLL32 = "macawlink_native32.dll"
+
+func regsvr32(args ...string) error {
+	exe := filepath.Join(os.Getenv("SystemRoot"), "SysWOW64", "regsvr32.exe")
+	if _, err := os.Stat(exe); err != nil {
+		return nil // 32-bit Windows or no WOW64: nothing to do
+	}
+	cmd := exec.Command(exe, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
+	return cmd.Run()
+}
+
 var (
 	shell32         = syscall.NewLazyDLL("shell32.dll")
 	user32          = syscall.NewLazyDLL("user32.dll")
@@ -30,7 +44,7 @@ var (
 )
 
 // Files shipped next to macawlink.exe that get installed.
-var payload = []string{"macawlink.exe", native.DLLName, "adb.exe", "AdbWinApi.dll", "AdbWinUsbApi.dll", "macawlink.ico", "NOTICE.txt"}
+var payload = []string{"macawlink.exe", native.DLLName, DLL32, "adb.exe", "AdbWinApi.dll", "AdbWinUsbApi.dll", "macawlink.ico", "NOTICE.txt"}
 
 func IsAdmin() bool {
 	r, _, _ := pIsUserAnAdmin.Call()
@@ -151,6 +165,11 @@ func Install(srcDir string) error {
 	if err := native.Register(); err != nil {
 		return fmt.Errorf("register camera: %w", err)
 	}
+	if _, err := os.Stat(filepath.Join(dst, DLL32)); err == nil {
+		if err := regsvr32("/s", filepath.Join(dst, DLL32)); err != nil {
+			log.Printf("install: 32-bit camera registration failed: %v", err)
+		}
+	}
 	shortcut(filepath.Join(dst, "macawlink.exe"))
 	return nil
 }
@@ -162,6 +181,9 @@ func Uninstall(exeDir string) error {
 	}
 	if native.Load(exeDir) == nil {
 		native.Unregister()
+	}
+	if _, err := os.Stat(filepath.Join(exeDir, DLL32)); err == nil {
+		regsvr32("/u", "/s", filepath.Join(exeDir, DLL32))
 	}
 	os.Remove(shortcutPath())
 	if strings.EqualFold(filepath.Clean(exeDir), filepath.Clean(Dir())) {

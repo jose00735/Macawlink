@@ -66,6 +66,7 @@ func (p *Pipeline) HandleConfig(payload []byte) error {
 	}
 	p.cfg = cfg
 	p.stats.SampleRate, p.stats.Channels = cfg.SampleRate, cfg.Channels
+	p.stats.LevelDB = -90
 	p.retryAt = time.Time{}
 	p.ensureOpen()
 	log.Printf("audio: config %d Hz x%d, %d ms frames", cfg.SampleRate, cfg.Channels, cfg.FrameMs)
@@ -80,7 +81,7 @@ func (p *Pipeline) ensureOpen() {
 	if err != nil {
 		p.retryAt = time.Now().Add(5 * time.Second)
 		p.stats.Endpoint = ""
-		p.stats.LastError = "virtual microphone not found — install VB-Audio Virtual Cable (" + err.Error() + ")"
+		p.stats.LastError = "No virtual microphone found (no “CABLE Input” playback device). Install VB-Audio Virtual Cable from vb-audio.com/Cable, then restart Macawlink."
 		log.Printf("audio: %s", p.stats.LastError)
 		return
 	}
@@ -97,10 +98,10 @@ func (p *Pipeline) HandleFrame(payload []byte) error {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.ensureOpen()
-	if p.out == nil {
+	if p.cfg.SampleRate == 0 {
 		return nil
 	}
+	p.ensureOpen()
 	ch := p.cfg.Channels
 	n := len(data) / 2
 	if cap(p.buf) < n {
@@ -129,7 +130,10 @@ func (p *Pipeline) HandleFrame(payload []byte) error {
 		}
 		pcm[i] = int16(v)
 	}
-	p.trackLevel(peak)
+	p.trackLevel(peak) // the meter works even before a virtual mic is installed
+	if p.out == nil {
+		return nil
+	}
 
 	frames := n / ch
 	rate := p.cfg.SampleRate

@@ -36,6 +36,7 @@ const (
 )
 
 type CameraStatus struct {
+	Mode       string `json:"mode"` // "Media Foundation" (Win11) | "DirectShow" (Win10)
 	Supported  bool   `json:"supported"`
 	Registered bool   `json:"registered"`
 	Error      string `json:"error,omitempty"`
@@ -69,9 +70,11 @@ type Options struct {
 	Serial     string // pick a specific phone when several are attached
 	NewDecoder func(codec int) (native.Decoder, error)
 	OpenAudio  func(rate, ch int) (native.AudioOut, error)
-	OpenRing   func() (*vcam.Ring, error)
-	Camera     CameraStatus // filled by main after registering the virtual camera
-	SaveConfig bool         // persist settings to %APPDATA% (off in tests)
+	// RingSources open the camera rings: the Windows 11 Frame Server ring and/or the
+	// session-local ring read by the Windows 10 DirectShow camera. Retried every second.
+	RingSources []func() (*vcam.Ring, error)
+	Camera      CameraStatus // filled by main after registering the virtual camera
+	SaveConfig  bool         // persist settings to %APPDATA% (off in tests)
 }
 
 type App struct {
@@ -80,7 +83,7 @@ type App struct {
 	mu       sync.Mutex
 	settings config.Settings
 	status   Status
-	ring     *vcam.Ring
+	rings    []*vcam.Ring // indexed like opt.RingSources; nil until open
 	conn     net.Conn
 	autoAt   map[string]time.Time
 
@@ -92,11 +95,11 @@ type App struct {
 }
 
 func New(opt Options, s config.Settings) *App {
-	a := &App{opt: opt, settings: s, autoAt: map[string]time.Time{}}
+	a := &App{opt: opt, settings: s, autoAt: map[string]time.Time{}, rings: make([]*vcam.Ring, len(opt.RingSources))}
 	a.status = Status{Version: Version, Phase: PhaseStarting, Message: "Starting…", Camera: opt.Camera}
 	a.video = &video.Pipeline{
 		NewDecoder:      opt.NewDecoder,
-		Sink:            a.sink,
+		Sinks:           a.sinks,
 		RequestKeyframe: func() { a.send(protocol.RequestKeyframe, 0, nil) },
 		OnCodecFailed:   a.codecFailed,
 		Mirror:          func() bool { a.mu.Lock(); defer a.mu.Unlock(); return a.settings.Video.Mirror },
@@ -108,13 +111,24 @@ func New(opt Options, s config.Settings) *App {
 	return a
 }
 
-func (a *App) sink() video.Sink {
+func (a *App) sinks() []video.Sink {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.ring == nil {
-		return nil
+	var out []video.Sink
+	for _, r := range a.rings {
+		if r != nil {
+			out = append(out, r)
+		}
 	}
-	return a.ring
+	return out
+}
+
+func (a *App) setConnectedLocked(on bool) {
+	for _, r := range a.rings {
+		if r != nil {
+			r.SetConnected(on)
+		}
+	}
 }
 
 // Run blocks until ctx ends.
@@ -130,39 +144,49 @@ func (a *App) ringLoop(ctx context.Context) {
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
 	for {
-		a.mu.Lock()
-		ring := a.ring
-		a.mu.Unlock()
-		if ring == nil && a.opt.OpenRing != nil {
-			if r, err := a.opt.OpenRing(); err == nil {
+		for i, open := range a.opt.RingSources {
+			a.mu.Lock()
+			have := a.rings[i] != nil
+			a.mu.Unlock()
+			if have {
+				continue
+			}
+			if r, err := open(); err == nil {
 				a.mu.Lock()
-				a.ring = r
-				ring = r
+				a.rings[i] = r
 				r.SetConnected(a.status.Phase == PhaseStreaming)
 				a.mu.Unlock()
-				log.Printf("camera: frame ring open")
+				log.Printf("camera: frame ring %d open", i)
 			}
 		}
-		if ring != nil {
-			w, h, fps := ring.Requested()
-			a.mu.Lock()
-			wasInUse := a.status.Camera.InUse
-			a.status.Camera.RingOpen = true
-			a.status.Camera.AppWidth, a.status.Camera.AppHeight, a.status.Camera.AppFPS = w, h, fps
-			a.status.Camera.InUse = w > 0
-			a.status.Camera.Delivered = ring.Delivered()
-			a.mu.Unlock()
-			if !wasInUse && w > 0 {
-				log.Printf("camera: app opened %dx%d@%d", w, h, fps)
-				a.send(protocol.RequestKeyframe, 0, nil) // first picture right away
+		a.mu.Lock()
+		wasInUse := a.status.Camera.InUse
+		cs := &a.status.Camera
+		cs.RingOpen, cs.InUse, cs.AppWidth, cs.AppHeight, cs.AppFPS, cs.Delivered = false, false, 0, 0, 0, 0
+		for _, r := range a.rings {
+			if r == nil {
+				continue
 			}
+			cs.RingOpen = true
+			cs.Delivered += r.Delivered()
+			if w, h, fps := r.Requested(); w > 0 && !cs.InUse {
+				cs.InUse, cs.AppWidth, cs.AppHeight, cs.AppFPS = true, w, h, fps
+			}
+		}
+		nowInUse, w, h, fps := cs.InUse, cs.AppWidth, cs.AppHeight, cs.AppFPS
+		a.mu.Unlock()
+		if !wasInUse && nowInUse {
+			log.Printf("camera: app opened %dx%d@%d", w, h, fps)
+			a.send(protocol.RequestKeyframe, 0, nil) // first picture right away
 		}
 		select {
 		case <-ctx.Done():
 			a.mu.Lock()
-			if a.ring != nil {
-				a.ring.Close()
-				a.ring = nil
+			for i, r := range a.rings {
+				if r != nil {
+					r.Close()
+					a.rings[i] = nil
+				}
 			}
 			a.mu.Unlock()
 			return
@@ -199,9 +223,7 @@ func (a *App) connLoop(ctx context.Context) {
 		a.audio.Reset()
 		a.mu.Lock()
 		a.conn = nil
-		if a.ring != nil {
-			a.ring.SetConnected(false)
-		}
+		a.setConnectedLocked(false)
 		a.status.Video, a.status.Phone, a.status.RTTms, a.status.Cameras = video.Stats{}, protocol.StatsMsg{}, 0, nil
 		a.mu.Unlock()
 		a.setPhase(PhaseWaitingApp, "Phone disconnected — reconnecting…")
@@ -306,9 +328,7 @@ func (a *App) session(ctx context.Context, conn net.Conn, helloPkt protocol.Pack
 	if a.opt.Addr != "" {
 		a.status.Transport = "TCP " + a.opt.Addr
 	}
-	if a.ring != nil {
-		a.ring.SetConnected(true)
-	}
+	a.setConnectedLocked(true)
 	a.mu.Unlock()
 	host, _ := os.Hostname()
 	ack, _ := json.Marshal(protocol.HelloAckMsg{PCName: host, Protocol: 1})

@@ -237,9 +237,12 @@ function show(st) {
   $("battery").textContent = st.phone.battery ? `${st.phone.battery}%${st.phone.charging ? " ⚡" : ""}` : "—";
   $("temp").textContent = st.phone.temp_c ? st.phone.temp_c.toFixed(1) + " °C" : "—";
   const c = st.camera;
-  $("cam").innerHTML = c.registered ? `<span class="badge on">REGISTERED</span>` : `<span class="badge">${c.supported ? "NOT REGISTERED" : "NEEDS WINDOWS 11"}</span>`;
+  const mode = c.mode === "DirectShow" ? "WINDOWS 10 · DIRECTSHOW" : (c.mode ? "WINDOWS 11" : "");
+  $("cam").innerHTML = c.registered ? `<span class="badge on">ACTIVE · ${mode}</span>` : `<span class="badge">NOT SET UP</span>`;
   $("inuse").textContent = c.in_use ? `${c.app_width}×${c.app_height} @ ${c.app_fps}` : "no";
-  $("camhint").innerHTML = c.error ? c.error : (c.registered ? `Pick <code>Macawlink Camera</code> in Teams, Zoom, Meet or OBS.` : "");
+  $("camhint").innerHTML = c.error ? c.error : (!c.registered ? "" : c.mode === "DirectShow"
+    ? `Pick <code>Macawlink Camera</code> in Chrome, Edge, Zoom, Teams, Discord or OBS. Restart the browser once after setup. (The Windows 10 Camera app only lists real webcams.)`
+    : `Pick <code>Macawlink Camera</code> in Teams, Zoom, Meet or OBS.`);
   const v = st.video;
   $("vin").textContent = v.width ? `${v.codec.toUpperCase()} ${v.width}×${v.height}` : "—";
   $("vfps").textContent = v.width ? v.fps.toFixed(1) + " fps" : "—";
@@ -248,7 +251,7 @@ function show(st) {
   $("aout").textContent = a.endpoint || "—";
   $("afmt").textContent = a.sample_rate ? `PCM ${a.sample_rate / 1000} kHz · ${a.channels === 2 ? "stereo" : "mono"}` : "—";
   $("alat").textContent = a.sample_rate ? a.queued_ms + " ms" : "—";
-  $("level").style.width = a.sample_rate ? Math.max(0, Math.min(100, (a.level_db + 60) / 60 * 100)) + "%" : "0";
+  $("level").style.width = a.sample_rate && a.level_db > -90 ? Math.max(0, Math.min(100, (a.level_db + 60) / 60 * 100)) + "%" : "0";
   $("michint").innerHTML = a.last_error ? a.last_error :
     (a.endpoint && /cable/i.test(a.endpoint) ? `In your call app pick <code>CABLE Output</code> as the microphone.` :
      (a.endpoint ? `In your call app pick <code>Macawlink Microphone</code>.` : ""));

@@ -57,6 +57,14 @@ and mic were plugged in:
 - No phone → the DLL renders a violet card with a moving cyan scan line. Apps never lose the device mid-call.
 - The DLL also implements `IMFSampleAllocatorControl` (uses the pipeline's allocator when given) and `IKsControl` stubs, as Frame Server expects.
 
+### 2.1b Windows 10: DirectShow camera (`windows/native/dshow_filter.cpp`)
+- Windows 10 has no virtual-camera API, so the same DLL also contains a **DirectShow video capture filter**. It is registered in the video input device category, which is how OBS Virtual Camera appears too.
+- Apps load it into their own process: Chrome/Edge (and WebView2 apps like the new Teams), Zoom, Discord and OBS. It reads the **session-local** ring `Local\Macawlink.Video`, which `macawlink.exe` creates at startup.
+- It is a single capture pin with `IAMStreamConfig` (9 formats: 720p/1080p/480p × YUY2/NV12/I420, 5–60 fps) and `IKsPropertySet` (pin category capture). Samples are pushed through the downstream allocator from a paced worker thread.
+- A 32-bit build (`macawlink_native32.dll`, registered with SysWOW64 `regsvr32`) covers 32-bit apps.
+- `DllRegisterServer` adds the DirectShow device **only when the MF virtual camera is unavailable**, so Windows 11 never lists the camera twice.
+- Go publishes each frame to every open ring at the size that ring's app asked for.
+
 ### 2.2 Virtual microphone (`windows/vmic-driver`)
 - **Now:** VB-Audio Virtual Cable. Go renders PCM into *CABLE Input* via WASAPI shared mode with auto format conversion; apps record *CABLE Output*.
 - **Phase 3:** a SYSVAD-based driver exposing **“Macawlink Microphone”**. It needs an EV certificate plus Microsoft attestation signing. `audio.Endpoints` already prefers it when present, so no code change is needed.
@@ -157,5 +165,5 @@ Presets: **Low** (480p30, 1.5 Mbps, 16 kHz), **Meeting** (720p30 auto, 48 kHz mo
 | | Minimum |
 |---|---|
 | Android | 10 (API 29) |
-| Windows | 11 (22000+) for the camera; the mic path also works on Windows 10 |
+| Windows | 10 (DirectShow camera: browsers, Zoom, Teams, OBS) or 11 (virtual camera: every app) |
 | PC | any x64; hardware-accelerated decode used when the MF decoder provides it |

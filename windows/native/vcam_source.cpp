@@ -2,7 +2,6 @@
 // Frame Server loads this inside its own service process; frames come from the Go receiver
 // through the shared-memory ring described in ring.h.
 #include "vcam_source.h"
-#include <sddl.h>
 
 namespace {
 
@@ -408,14 +407,9 @@ HRESULT MkStream::Start(IUnknown* allocator) {
     state_ = MK_STREAM_STATE_RUNNING;
     nextDue_ = 0;
     if (!thread_) thread_ = CreateThread(nullptr, 0, WorkerThunk, this, 0, nullptr);
-    OpenRing();
-    if (ring_) {
-        auto* hd = reinterpret_cast<volatile MkRingHeader*>(ring_);
-        hd->reqWidth = width_;
-        hd->reqHeight = height_;
-        hd->reqFps = fps_;
-    }
-    MkLog("stream: start %ux%u@%u allocator=%d ring=%d", width_, height_, fps_, allocator_ != nullptr, ring_ != nullptr);
+    ring_.Open();
+    ring_.SetRequested(width_, height_, fps_);
+    MkLog("stream: start %ux%u@%u allocator=%d ring=%d", width_, height_, fps_, allocator_ != nullptr, ring_.IsOpen());
     return queue_->QueueEventParamVar(MEStreamStarted, GUID_NULL, S_OK, nullptr);
 }
 
@@ -425,10 +419,7 @@ HRESULT MkStream::Stop() {
     state_ = MK_STREAM_STATE_STOPPED;
     for (int i = 0; i < tokenCount_; i++) SafeRelease(tokens_[i]);
     tokenCount_ = 0;
-    if (ring_) {
-        auto* hd = reinterpret_cast<volatile MkRingHeader*>(ring_);
-        hd->reqWidth = hd->reqHeight = hd->reqFps = 0;
-    }
+    ring_.SetRequested(0, 0, 0);
     MkLog("stream: stop");
     return queue_->QueueEventParamVar(MEStreamStopped, GUID_NULL, S_OK, nullptr);
 }
@@ -450,13 +441,7 @@ void MkStream::Shutdown() {
     tokenCount_ = 0;
     if (queue_) queue_->Shutdown();
     SafeRelease(allocator_);
-    if (ring_) {
-        auto* hd = reinterpret_cast<volatile MkRingHeader*>(ring_);
-        hd->reqWidth = hd->reqHeight = hd->reqFps = 0;
-        UnmapViewOfFile(ring_);
-        ring_ = nullptr;
-    }
-    if (ringMap_) { CloseHandle(ringMap_); ringMap_ = nullptr; }
+    ring_.Close();
 }
 
 DWORD WINAPI MkStream::WorkerThunk(LPVOID self) {
@@ -467,6 +452,7 @@ DWORD WINAPI MkStream::WorkerThunk(LPVOID self) {
 }
 
 void MkStream::Worker() {
+    MkHighResTimer hires;  // accurate frame pacing
     HANDLE waits[2] = {quit_, wake_};
     for (;;) {
         DWORD w = WaitForMultipleObjects(2, waits, FALSE, INFINITE);
@@ -541,14 +527,14 @@ HRESULT MkStream::MakeSample(IMFSample** out) {
     BYTE* scan0 = nullptr;
     LONG pitch = 0;
     if (SUCCEEDED(buf->QueryInterface(__uuidof(IMF2DBuffer), (void**)&b2d)) && SUCCEEDED(b2d->Lock2D(&scan0, &pitch))) {
-        FillFrame(scan0, pitch, scan0 + (size_t)pitch * height_, width_, height_);
+        ring_.Fill(scan0, pitch, scan0 + (size_t)pitch * height_, width_, height_, frameNo_);
         b2d->Unlock2D();
     } else {
         BYTE* data = nullptr;
         DWORD maxLen = 0;
         hr = buf->Lock(&data, &maxLen, nullptr);
         if (SUCCEEDED(hr)) {
-            FillFrame(data, (LONG)width_, data + (size_t)width_ * height_, width_, height_);
+            ring_.Fill(data, (LONG)width_, data + (size_t)width_ * height_, width_, height_, frameNo_);
             buf->Unlock();
         }
     }
@@ -558,120 +544,4 @@ HRESULT MkStream::MakeSample(IMFSample** out) {
     if (FAILED(hr)) { sample->Release(); return hr; }
     *out = sample;
     return S_OK;
-}
-
-bool MkStream::OpenRing() {
-    if (ring_) return true;
-    ULONGLONG now = GetTickCount64();
-    if (lastRingTry_ && now - lastRingTry_ < 1000) return false;
-    lastRingTry_ = now;
-
-    PSECURITY_DESCRIPTOR sd = nullptr;
-    SECURITY_ATTRIBUTES sa = {sizeof(sa), nullptr, FALSE};
-    if (ConvertStringSecurityDescriptorToSecurityDescriptorW(MK_RING_SDDL, SDDL_REVISION_1, &sd, nullptr))
-        sa.lpSecurityDescriptor = sd;
-    ringMap_ = CreateFileMappingW(INVALID_HANDLE_VALUE, sd ? &sa : nullptr, PAGE_READWRITE, 0, MK_RING_BYTES, MK_RING_NAME);
-    bool existed = GetLastError() == ERROR_ALREADY_EXISTS;
-    if (sd) LocalFree(sd);
-    if (!ringMap_) {
-        ringMap_ = OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE, MK_RING_NAME);
-        existed = true;
-    }
-    if (!ringMap_) {
-        // Not allowed to create Global\ objects here: use the session-local name instead.
-        ringMap_ = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, MK_RING_BYTES, MK_RING_NAME_LOCAL);
-        existed = GetLastError() == ERROR_ALREADY_EXISTS;
-    }
-    if (!ringMap_) {
-        MkLog("ring: unavailable (err %lu)", GetLastError());
-        return false;
-    }
-    ring_ = (BYTE*)MapViewOfFile(ringMap_, FILE_MAP_ALL_ACCESS, 0, 0, MK_RING_BYTES);
-    if (!ring_) { CloseHandle(ringMap_); ringMap_ = nullptr; return false; }
-    auto* hd = reinterpret_cast<MkRingHeader*>(ring_);
-    if (!existed || hd->magic != MK_RING_MAGIC) {
-        memset(hd, 0, sizeof(*hd));
-        hd->magic = MK_RING_MAGIC;
-        hd->version = MK_RING_VERSION;
-    }
-    MkLog("ring: mapped (existed=%d)", existed);
-    return true;
-}
-
-// Writes one NV12 frame: the phone's latest picture when connected, otherwise a
-// "waiting" card in the Macawlink palette (deep violet with a sweeping cyan scanline).
-void MkStream::FillFrame(BYTE* y, LONG pitch, BYTE* uv, UINT32 w, UINT32 h) {
-    if (!ring_) OpenRing();
-    if (ring_) {
-        auto* hd = reinterpret_cast<volatile MkRingHeader*>(ring_);
-        hd->reqWidth = w;
-        hd->reqHeight = h;
-        hd->reqFps = fps_;
-        hd->consumerTick = GetTickCount64();
-        if (hd->connected && hd->seq != 0 && hd->magic == MK_RING_MAGIC) {
-            MemoryBarrier();
-            uint32_t idx = hd->latest % MK_RING_SLOTS;
-            uint32_t sw = hd->slots[idx].width, sh = hd->slots[idx].height;
-            if (sw && sh && sw <= MK_MAX_W && sh <= MK_MAX_H && !(sw & 1) && !(sh & 1)) {
-                const BYTE* src = ring_ + MK_HEADER_BYTES + (size_t)idx * MK_SLOT_BYTES;
-                const BYTE* suv = src + (size_t)sw * sh;
-                if (sw == w && sh == h) {
-                    for (UINT32 r = 0; r < h; r++) memcpy(y + (size_t)r * pitch, src + (size_t)r * w, w);
-                    for (UINT32 r = 0; r < h / 2; r++) memcpy(uv + (size_t)r * pitch, suv + (size_t)r * w, w);
-                } else {
-                    // Format switch in flight: nearest-neighbour until Go rescales to the new size.
-                    for (UINT32 r = 0; r < h; r++) {
-                        const BYTE* srow = src + (size_t)(r * sh / h) * sw;
-                        BYTE* drow = y + (size_t)r * pitch;
-                        for (UINT32 c = 0; c < w; c++) drow[c] = srow[c * sw / w];
-                    }
-                    for (UINT32 r = 0; r < h / 2; r++) {
-                        const BYTE* srow = suv + (size_t)(r * (sh / 2) / (h / 2)) * sw;
-                        BYTE* drow = uv + (size_t)r * pitch;
-                        for (UINT32 c = 0; c < w / 2; c++) {
-                            UINT32 sc = (c * (sw / 2) / (w / 2)) * 2;
-                            drow[c * 2] = srow[sc];
-                            drow[c * 2 + 1] = srow[sc + 1];
-                        }
-                    }
-                }
-                hd->delivered = hd->delivered + 1;
-                return;
-            }
-        }
-    }
-
-    // Placeholder card.
-    const BYTE bgY = 25, bgU = 140, bgV = 129;      // #0D0522
-    const BYTE cyY = 162, cyU = 170, cyV = 22;      // #00F0FF
-    const BYTE mgY = 124, mgU = 172, mgV = 209;     // #FF2BD6
-    UINT32 band = h / 60 ? h / 60 : 1;
-    UINT32 scan = (UINT32)((frameNo_ * 6) % h);
-    UINT32 boxW = w / 6, boxH = h / 6, bx = (w - boxW) / 2, by = (h - boxH) / 2;
-    UINT32 t = h / 180 ? h / 180 : 1;
-    for (UINT32 r = 0; r < h; r++) {
-        BYTE* row = y + (size_t)r * pitch;
-        bool inScan = r >= scan && r < scan + band;
-        memset(row, inScan ? cyY : bgY, w);
-        if (!inScan && r >= by && r < by + boxH) {
-            bool edge = r < by + t || r >= by + boxH - t;
-            if (edge) memset(row + bx, mgY, boxW);
-            else { memset(row + bx, mgY, t); memset(row + bx + boxW - t, mgY, t); }
-        }
-    }
-    for (UINT32 r = 0; r < h / 2; r++) {
-        BYTE* row = uv + (size_t)r * pitch;
-        bool inScan = r * 2 >= scan && r * 2 < scan + band;
-        bool inBox = r * 2 >= by && r * 2 < by + boxH;
-        bool edge = r * 2 < by + t || r * 2 >= by + boxH - t;
-        for (UINT32 c = 0; c < w / 2; c++) {
-            BYTE u = bgU, v = bgV;
-            UINT32 px = c * 2;
-            if (inScan) { u = cyU; v = cyV; }
-            else if (inBox && px >= bx && px < bx + boxW &&
-                     (edge || px < bx + t || px >= bx + boxW - t)) { u = mgU; v = mgV; }
-            row[c * 2] = u;
-            row[c * 2 + 1] = v;
-        }
-    }
 }

@@ -94,9 +94,11 @@ func main() {
 		OpenAudio: func(rate, ch int) (native.AudioOut, error) {
 			return native.OpenAudio(audio.Endpoints, rate, ch)
 		},
-		OpenRing:   vcam.OpenRing,
-		Camera:     cam,
-		SaveConfig: true,
+		// Windows 11: ring created by Frame Server. Windows 10: our session ring for the
+		// DirectShow camera inside each app. Opening both is harmless.
+		RingSources: []func() (*vcam.Ring, error){vcam.OpenGlobal, vcam.CreateLocal},
+		Camera:      cam,
+		SaveConfig:  true,
 	}, settings)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -172,15 +174,18 @@ func menu(a *app.App, url, logFile string) []tray.Item {
 	}
 }
 
-// setupCamera makes sure the media source is registered (offering the one-time admin
-// setup) and starts "Macawlink Camera" for this session.
+// setupCamera makes sure the camera is registered (offering the one-time admin setup).
+// Windows 11 uses the Media Foundation virtual camera; Windows 10 the DirectShow filter.
 func setupCamera(exeDir string) app.CameraStatus {
-	cam := app.CameraStatus{Supported: native.VirtualCameraSupported()}
-	if !cam.Supported {
-		cam.Error = "Windows 11 (build 22000 or newer) is required for Macawlink Camera. The microphone still works."
-		return cam
+	mf := native.VirtualCameraSupported()
+	cam := app.CameraStatus{Supported: true, Mode: "DirectShow"}
+	if mf {
+		cam.Mode = "Media Foundation"
 	}
-	if !install.IsInstalledHere(exeDir) {
+	ready := func() bool {
+		return install.IsInstalledHere(exeDir) && (mf || native.CameraMode() == native.CameraDirectShow)
+	}
+	if !ready() {
 		ans := install.MessageBox("Macawlink setup",
 			"Macawlink needs a one-time setup to add “Macawlink Camera” to Windows.\n\n"+
 				"It installs to Program Files and asks for administrator rights. Continue?",
@@ -198,18 +203,20 @@ func setupCamera(exeDir string) app.CameraStatus {
 			}
 		}
 	}
-	if !install.IsInstalledHere(exeDir) {
+	if !ready() {
 		cam.Error = "Camera not set up yet — run macawlink.exe --install (or accept the setup prompt)."
 		return cam
 	}
 	cam.Registered = true
-	onWorker(func() {
-		if err := native.StartVirtualCamera(vcam.FriendlyName); err != nil {
-			cam.Registered = false
-			cam.Error = "Could not start Macawlink Camera: " + err.Error()
-		}
-	})
-	log.Printf("camera: registered=%v %s", cam.Registered, cam.Error)
+	if mf {
+		onWorker(func() {
+			if err := native.StartVirtualCamera(vcam.FriendlyName); err != nil {
+				cam.Registered = false
+				cam.Error = "Could not start Macawlink Camera: " + err.Error()
+			}
+		})
+	}
+	log.Printf("camera: mode=%s registered=%v %s", cam.Mode, cam.Registered, cam.Error)
 	return cam
 }
 

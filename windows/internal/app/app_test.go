@@ -102,6 +102,12 @@ func TestEndToEndWithFakePhone(t *testing.T) {
 
 	mem := make([]byte, vcam.RingBytes)
 	ring, _ := vcam.NewRingFromMemory(mem, nil)
+	// Second ring, like the Windows 10 DirectShow camera opened by another app at 1280x720.
+	mem2 := make([]byte, vcam.RingBytes)
+	ring2, _ := vcam.NewRingFromMemory(mem2, nil)
+	binary.LittleEndian.PutUint32(mem2[96:], 1280)
+	binary.LittleEndian.PutUint32(mem2[100:], 720)
+	binary.LittleEndian.PutUint32(mem2[104:], 30)
 	// An app opened the camera at 640x480@30.
 	binary.LittleEndian.PutUint32(mem[96:], 640)
 	binary.LittleEndian.PutUint32(mem[100:], 480)
@@ -115,7 +121,10 @@ func TestEndToEndWithFakePhone(t *testing.T) {
 		Addr:       ln.Addr().String(),
 		NewDecoder: func(int) (native.Decoder, error) { return dec, nil },
 		OpenAudio:  func(rate, ch int) (native.AudioOut, error) { return aud, nil },
-		OpenRing:   func() (*vcam.Ring, error) { return ring, nil },
+		RingSources: []func() (*vcam.Ring, error){
+			func() (*vcam.Ring, error) { return ring, nil },
+			func() (*vcam.Ring, error) { return ring2, nil },
+		},
 	}, start)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -139,6 +148,12 @@ func TestEndToEndWithFakePhone(t *testing.T) {
 	meta := 24 + int(latest)*24
 	if w, h := ld32(mem, meta+8), ld32(mem, meta+12); w != 640 || h != 480 {
 		t.Errorf("published %dx%d, want 640x480", w, h)
+	}
+	// The second consumer gets its own size.
+	waitFor(t, "second ring", func() bool { return ld64(mem2, 16) >= 1 })
+	meta2 := 24 + int(ld32(mem2, 8))*24
+	if w, h := ld32(mem2, meta2+8), ld32(mem2, meta2+12); w != 1280 || h != 720 {
+		t.Errorf("ring2 published %dx%d, want 1280x720", w, h)
 	}
 	// Keyframe was prefixed with SPS+PPS.
 	dec.mu.Lock()
@@ -188,7 +203,7 @@ func TestEndToEndWithFakePhone(t *testing.T) {
 
 	// Phone leaves → placeholder.
 	close(done)
-	waitFor(t, "disconnect", func() bool { return ld32(mem, 12) == 0 })
+	waitFor(t, "disconnect", func() bool { return ld32(mem, 12) == 0 && ld32(mem2, 12) == 0 })
 	if st := a.Status(); st.Phase == PhaseStreaming {
 		t.Errorf("still streaming after BYE")
 	}

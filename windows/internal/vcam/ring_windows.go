@@ -15,33 +15,44 @@ var (
 
 const (
 	fileMapAllAccess = 0xF001F
-	// RingNameLocal is used when the media source cannot create Global\ objects.
+	// RingNameLocal is the session-local ring read by the DirectShow camera (it runs inside
+	// each app's process on Windows 10). We create it at startup.
 	RingNameLocal = `Local\Macawlink.Video`
 )
 
 var ErrNoRing = errors.New("vcam: camera not opened by any app yet")
 
-// OpenRing maps the camera's shared memory. The media source (consumer) creates it the
-// first time an app opens Macawlink Camera; until then this returns ErrNoRing and the
-// caller retries. Global\ is preferred (Frame Server in session 0), Local\ is the fallback.
-func OpenRing() (*Ring, error) {
-	for _, n := range []string{RingName, RingNameLocal} {
-		name, _ := syscall.UTF16PtrFromString(n)
-		h, _, _ := pOpenFileMapping.Call(fileMapAllAccess, 0, uintptr(unsafe.Pointer(name)))
-		if h == 0 {
-			continue
-		}
-		addr, err := syscall.MapViewOfFile(syscall.Handle(h), fileMapAllAccess, 0, 0, RingBytes)
-		if addr == 0 {
-			syscall.CloseHandle(syscall.Handle(h))
-			return nil, err
-		}
-		base := *(*unsafe.Pointer)(unsafe.Pointer(&addr)) // uintptr from MapViewOfFile -> pointer
-		mem := unsafe.Slice((*byte)(base), RingBytes)
-		return NewRingFromMemory(mem, func() {
-			syscall.UnmapViewOfFile(addr)
-			syscall.CloseHandle(syscall.Handle(h))
-		})
+// OpenGlobal maps the ring the Windows 11 media source creates inside Frame Server the first
+// time an app opens Macawlink Camera. Until then it returns ErrNoRing; callers retry.
+func OpenGlobal() (*Ring, error) {
+	name, _ := syscall.UTF16PtrFromString(RingName)
+	h, _, _ := pOpenFileMapping.Call(fileMapAllAccess, 0, uintptr(unsafe.Pointer(name)))
+	if h == 0 {
+		return nil, ErrNoRing
 	}
-	return nil, ErrNoRing
+	return mapRing(syscall.Handle(h))
+}
+
+// CreateLocal creates (or opens) the session-local ring for in-app DirectShow filters.
+func CreateLocal() (*Ring, error) {
+	name, _ := syscall.UTF16PtrFromString(RingNameLocal)
+	h, err := syscall.CreateFileMapping(syscall.InvalidHandle, nil, syscall.PAGE_READWRITE, 0, RingBytes, name)
+	if h == 0 {
+		return nil, err
+	}
+	return mapRing(h)
+}
+
+func mapRing(h syscall.Handle) (*Ring, error) {
+	addr, err := syscall.MapViewOfFile(h, fileMapAllAccess, 0, 0, RingBytes)
+	if addr == 0 {
+		syscall.CloseHandle(h)
+		return nil, err
+	}
+	base := *(*unsafe.Pointer)(unsafe.Pointer(&addr)) // uintptr from MapViewOfFile -> pointer
+	mem := unsafe.Slice((*byte)(base), RingBytes)
+	return NewRingFromMemory(mem, func() {
+		syscall.UnmapViewOfFile(addr)
+		syscall.CloseHandle(h)
+	})
 }
