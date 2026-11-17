@@ -1,0 +1,18 @@
+LIBRARY macawlink_native
+EXPORTS
+    DllGetClassObject    PRIVATE
+    DllCanUnloadNow      PRIVATE
+    DllRegisterServer    PRIVATE
+    DllUnregisterServer  PRIVATE
+    mk_version
+    mk_vcam_supported
+    mk_vcam_start
+    mk_vcam_stop
+    mk_dec_create
+    mk_dec_push
+    mk_dec_pull
+    mk_dec_destroy
+    mk_audio_open
+    mk_audio_write
+    mk_audio_queued
+    mk_audio_close

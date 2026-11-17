@@ -1,57 +1,126 @@
-// Package vcam feeds decoded frames to the "Macawlink Camera" virtual device.
+// Package vcam publishes decoded frames to "Macawlink Camera".
 //
-// Go writes NV12 frames into a named shared-memory ring; the C++ Media Foundation
-// media source in windows/vcam-native reads the newest slot whenever an app pulls a sample.
-// See docs/ARCHITECTURE.md §2.1.
+// The virtual camera media source (windows/native, running inside Windows' Frame Server)
+// creates a named shared-memory ring; this package opens it and writes NV12 frames.
+// The layout must match windows/native/ring.h byte for byte.
 package vcam
 
-import "time"
-
-const (
-	SharedMemName = `Global\Macawlink.Video`
-	NewFrameEvent = `Global\Macawlink.Video.NewFrame`
-	Slots         = 3
-	MaxWidth      = 3840
-	MaxHeight     = 2160
-	// NV12 = 12 bits per pixel.
-	SlotBytes = MaxWidth * MaxHeight * 3 / 2
-
-	FriendlyName = "Macawlink Camera"
-	// CLSID of the media source in vcam-native; must match the DLL's registration.
-	MediaSourceCLSID = "{6E0D1A3B-6F2C-4C1E-9B7A-4D61434157B1}"
+import (
+	"errors"
+	"sync"
+	"sync/atomic"
+	"unsafe"
 )
 
-// RingHeader sits at offset 0 of the shared memory. Layout is shared with
-// vcam-native/include/macawlink_ring.h — change both together.
-type RingHeader struct {
-	Magic     uint32 // 'MKVC'
-	Version   uint32
-	Latest    uint32 // index of the most recently completed slot
-	Seq       uint64 // increments on every completed write
-	Width     uint32
-	Height    uint32
-	Stride    uint32
-	FourCC    uint32 // 'NV12'
-	Timestamp int64  // 100-ns units, QPC-based
-	Connected uint32 // 0 = show "Waiting for phone…" frame
+const (
+	RingName    = `Global\Macawlink.Video`
+	Magic       = 0x43564B4D // "MKVC"
+	Version     = 1
+	Slots       = 3
+	MaxWidth    = 1920
+	MaxHeight   = 1080
+	SlotBytes   = MaxWidth * MaxHeight * 3 / 2
+	HeaderBytes = 256
+	RingBytes   = HeaderBytes + Slots*SlotBytes
+
+	FriendlyName = "Macawlink Camera"
+
+	offMagic     = 0
+	offVersion   = 4
+	offLatest    = 8
+	offConnected = 12
+	offSeq       = 16
+	offSlots     = 24 // + i*24: seq u64, width u32, height u32, pts i64
+	slotMetaSize = 24
+	offReqW      = 96
+	offReqH      = 100
+	offReqFPS    = 104
+	offDelivered = 112
+	offTick      = 120
+)
+
+var ErrTooLarge = errors.New("vcam: frame larger than 1920x1080")
+
+// Ring is a view over the shared memory. All methods are safe for one producer goroutine
+// plus concurrent readers of Requested/Delivered.
+type Ring struct {
+	mu   sync.Mutex
+	mem  []byte
+	free func()
 }
 
-// Frame is one decoded, already-scaled image ready for the camera.
-type Frame struct {
-	Width, Height, Stride int
-	NV12                  []byte
-	PTS                   time.Duration
+// NewRingFromMemory wraps an existing buffer (used by tests and by the Windows opener).
+func NewRingFromMemory(mem []byte, free func()) (*Ring, error) {
+	if len(mem) < RingBytes {
+		return nil, errors.New("vcam: ring memory too small")
+	}
+	r := &Ring{mem: mem, free: free}
+	if r.u32(offMagic).Load() != Magic {
+		// Fresh mapping (we created it first): initialise the header.
+		for i := 0; i < HeaderBytes; i++ {
+			mem[i] = 0
+		}
+		r.u32(offVersion).Store(Version)
+		r.u32(offMagic).Store(Magic)
+	}
+	return r, nil
 }
 
-// Camera is the virtual camera lifecycle.
-type Camera interface {
-	// Register calls MFCreateVirtualCamera (Windows 11) and starts the device.
-	Register() error
-	// Write publishes the next frame to the ring.
-	Write(f Frame) error
-	// SetConnected toggles the placeholder frame shown when no phone is attached.
-	SetConnected(bool)
-	// RequestedFormat reports the format the consuming app opened (so the scaler targets it).
-	RequestedFormat() (width, height, fps int)
-	Close() error
+func (r *Ring) u32(off int) *atomic.Uint32 { return (*atomic.Uint32)(unsafe.Pointer(&r.mem[off])) }
+func (r *Ring) u64(off int) *atomic.Uint64 { return (*atomic.Uint64)(unsafe.Pointer(&r.mem[off])) }
+func (r *Ring) i64(off int) *atomic.Int64  { return (*atomic.Int64)(unsafe.Pointer(&r.mem[off])) }
+
+// Requested returns the format the consuming app opened (0,0,0 if nobody is streaming).
+func (r *Ring) Requested() (w, h, fps int) {
+	return int(r.u32(offReqW).Load()), int(r.u32(offReqH).Load()), int(r.u32(offReqFPS).Load())
+}
+
+// Delivered is the number of frames the camera has handed to apps so far.
+func (r *Ring) Delivered() uint64 { return r.u64(offDelivered).Load() }
+
+// ConsumerTick is the GetTickCount64 value of the last delivery (0 = never).
+func (r *Ring) ConsumerTick() uint64 { return r.u64(offTick).Load() }
+
+// SetConnected toggles between the live picture and the "waiting for phone" card.
+func (r *Ring) SetConnected(on bool) {
+	var v uint32
+	if on {
+		v = 1
+	}
+	r.u32(offConnected).Store(v)
+}
+
+// Publish copies one tight NV12 frame into the next slot and makes it current.
+func (r *Ring) Publish(nv12 []byte, w, h int, pts100ns int64) error {
+	if w <= 0 || h <= 0 || w > MaxWidth || h > MaxHeight || w%2 != 0 || h%2 != 0 {
+		return ErrTooLarge
+	}
+	if len(nv12) < w*h*3/2 {
+		return errors.New("vcam: short frame")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	seq := r.u64(offSeq).Load()
+	slot := 0
+	if seq != 0 {
+		slot = int(r.u32(offLatest).Load()+1) % Slots
+	}
+	base := HeaderBytes + slot*SlotBytes
+	copy(r.mem[base:base+w*h*3/2], nv12[:w*h*3/2])
+	meta := offSlots + slot*slotMetaSize
+	r.u64(meta).Store(seq + 1)
+	r.u32(meta + 8).Store(uint32(w))
+	r.u32(meta + 12).Store(uint32(h))
+	r.i64(meta + 16).Store(pts100ns)
+	r.u32(offLatest).Store(uint32(slot))
+	r.u64(offSeq).Store(seq + 1)
+	return nil
+}
+
+func (r *Ring) Close() {
+	r.SetConnected(false)
+	if r.free != nil {
+		r.free()
+		r.free = nil
+	}
 }
