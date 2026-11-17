@@ -8,6 +8,7 @@ import (
 
 	"github.com/jose00735/macawlink/windows/internal/app"
 	"github.com/jose00735/macawlink/windows/internal/config"
+	"github.com/jose00735/macawlink/windows/internal/pairing"
 )
 
 type fakeAPI struct{ s config.Settings }
@@ -23,6 +24,11 @@ func (f *fakeAPI) ApplySettings(s config.Settings) error {
 }
 func (f *fakeAPI) ApplyPreset(n string) error { f.s = config.Presets[n]; return nil }
 func (f *fakeAPI) RequestKeyframe()           {}
+func (f *fakeAPI) PairDecision(bool) error    { return nil }
+func (f *fakeAPI) PairedPhones() []pairing.Phone {
+	return []pairing.Phone{{ID: "p1", Name: "Pixel"}}
+}
+func (f *fakeAPI) ForgetPhone(string) {}
 
 func do(h http.Handler, method, url, host, body string, hdr bool) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(method, url, strings.NewReader(body))
@@ -41,7 +47,10 @@ func TestHandler(t *testing.T) {
 	if w := do(h, "GET", "/", "127.0.0.1:47801", "", false); w.Code != 200 || !strings.Contains(w.Body.String(), "Macaw") {
 		t.Fatalf("index: %d", w.Code)
 	}
-	if w := do(h, "GET", "/api/state", "127.0.0.1:47801", "", false); w.Code != 200 || !strings.Contains(w.Body.String(), `"resolutions"`) {
+	if w := do(h, "POST", "/api/pairing/accept", "127.0.0.1:47801", "", true); w.Code != 200 {
+		t.Fatalf("pairing accept: %d", w.Code)
+	}
+	if w := do(h, "GET", "/api/state", "127.0.0.1:47801", "", false); w.Code != 200 || !strings.Contains(w.Body.String(), `"resolutions"`) || !strings.Contains(w.Body.String(), `"Pixel"`) {
 		t.Fatalf("state: %d %s", w.Code, w.Body)
 	}
 	// DNS-rebinding and cross-site protections.

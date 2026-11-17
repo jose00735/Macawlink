@@ -45,6 +45,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -143,15 +144,22 @@ private fun Home(onStart: () -> Unit, onStop: () -> Unit, onSettings: (StreamSet
                 colors = ButtonDefaults.buttonColors(containerColor = if (on) Color(0xFF3A0A33) else Color(0xFF07343A), contentColor = if (on) Magenta else Cyan),
             ) { Text(if (on) "STOP" else "START STREAMING", fontFamily = Mono, fontWeight = FontWeight.Bold, letterSpacing = 2.sp) }
             Text(
-                "Plug the phone into your PC by USB (USB debugging on) and run Macawlink on Windows. " +
+                "Plug the phone into your PC by USB (USB debugging on), or pick your PC under Wi-Fi. " +
                     "Hold the phone in landscape — the picture is turned upright automatically.",
                 color = Dim, fontSize = 13.sp,
             )
+            var showPreview by remember { mutableStateOf(false) }
+            if (state.phase == Phase.STREAMING) {
+                Toggle("Show preview on the phone", showPreview) { showPreview = it }
+                if (showPreview) CameraPreview(state.width, state.height)
+            }
+            WifiCard(onConnect = { if (state.phase == Phase.STOPPED) onStart() }) { title, content -> Card(title, content) }
             Presets(s, onSettings)
             VideoCard(s, onSettings)
             AudioCard(s, onSettings)
             Spacer(Modifier.height(24.dp))
         }
+        PairingDialog()
     }
 }
 
@@ -181,7 +189,9 @@ private fun StatusCard(st: SessionHub.LinkState) {
     val (color, text) = when (st.phase) {
         Phase.STOPPED -> Dim to "Stopped"
         Phase.WAITING_PC -> Warn to "Waiting for your PC…"
-        Phase.STREAMING -> Ok to "Streaming to ${st.pcName ?: "PC"}"
+        Phase.CONNECTING -> Warn to "Connecting over Wi-Fi…"
+        Phase.PAIRING -> Magenta to "Pairing — compare the code"
+        Phase.STREAMING -> Ok to "Streaming to ${st.pcName ?: "PC"} · ${st.transport}"
     }
     Card("Status") {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -194,6 +204,8 @@ private fun StatusCard(st: SessionHub.LinkState) {
                 "${st.width}×${st.height} · ${"%.0f".format(st.fps)} fps · ${"%.1f".format(st.kbps / 1000.0)} Mbps · mic ${if (st.audioOn) "on" else "off"}",
                 color = Cyan, fontFamily = Mono, fontSize = 13.sp,
             )
+            if (st.targetKbps > 0) Text("Bitrate target ${"%.1f".format(st.targetKbps / 1000.0)} Mbps", color = Dim, fontFamily = Mono, fontSize = 12.sp)
+            if (st.thermal >= 2) Text("Phone is warm — quality reduced to protect it", color = Warn, fontSize = 13.sp)
         }
         st.error?.let { Text(it, color = Magenta, fontSize = 13.sp) }
     }

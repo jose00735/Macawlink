@@ -1,5 +1,10 @@
 package video
 
+import (
+	"runtime"
+	"sync"
+)
+
 // ScaleNV12 center-crops src (sw×sh) to the destination aspect ratio and bilinearly scales it
 // into dst (dw×dh), optionally mirrored horizontally. Both buffers are tight NV12.
 // When sizes match and mirror is off it is a plain copy.
@@ -23,67 +28,95 @@ func ScaleNV12(dst []byte, dw, dh int, src []byte, sw, sh int, mirror bool) {
 	scalePlane(dst[dw*dh:], dw/2, dh/2, dw, src[sw*sh:], sw, cx/2, cy/2, cw/2, ch/2, 2, mirror)
 }
 
-// scalePlane resamples one plane. Coordinates are in samples; bpp is 1 (Y) or 2 (UV pairs).
+// scalePlane resamples one plane with bilinear filtering (8-bit fixed-point weights).
+// Coordinates are in samples; bpp is 1 (Y) or 2 (interleaved UV pairs).
 func scalePlane(dst []byte, dw, dh, dstStride int, src []byte, srcStride, cx, cy, cw, ch, bpp int, mirror bool) {
 	const fp = 16
-	// Precompute horizontal taps.
-	x0 := make([]int, dw)
-	wx := make([]int, dw)
+	// Horizontal taps: byte offsets of the left/right neighbours and the right weight (0..256).
+	x0 := make([]int32, dw)
+	x1 := make([]int32, dw)
+	wx := make([]int32, dw)
 	for x := 0; x < dw; x++ {
 		dx := x
 		if mirror {
 			dx = dw - 1 - x
 		}
-		// Sample centre mapping: (dx+0.5)*cw/dw - 0.5
 		pos := ((2*dx+1)*cw<<fp)/(2*dw) - (1 << (fp - 1))
 		if pos < 0 {
 			pos = 0
 		}
 		i := pos >> fp
-		f := pos & (1<<fp - 1)
+		f := (pos & (1<<fp - 1)) >> (fp - 8)
+		j := i + 1
 		if i >= cw-1 {
-			i, f = cw-1, 0
+			i, j, f = cw-1, cw-1, 0
 		}
-		x0[x] = (cx + i) * bpp
-		wx[x] = f
+		x0[x] = int32((cx + i) * bpp)
+		x1[x] = int32((cx + j) * bpp)
+		wx[x] = int32(f)
 	}
-	for y := 0; y < dh; y++ {
+	rows := func(y0, y1 int) {
+		for y := y0; y < y1; y++ {
+			scaleRow(dst, dw, dh, dstStride, src, srcStride, cy, ch, bpp, y, x0, x1, wx)
+		}
+	}
+	// Bands in parallel: frames are big and PCs have cores to spare.
+	workers := runtime.NumCPU()
+	if workers > 8 {
+		workers = 8
+	}
+	if workers < 2 || dw*dh < 320*240 {
+		rows(0, dh)
+		return
+	}
+	var wg sync.WaitGroup
+	band := (dh + workers - 1) / workers
+	for y := 0; y < dh; y += band {
+		end := y + band
+		if end > dh {
+			end = dh
+		}
+		wg.Add(1)
+		go func(a, b int) { defer wg.Done(); rows(a, b) }(y, end)
+	}
+	wg.Wait()
+}
+
+func scaleRow(dst []byte, dw, dh, dstStride int, src []byte, srcStride, cy, ch, bpp, y int, x0, x1, wx []int32) {
+	const fp = 16
+	{
 		pos := ((2*y+1)*ch<<fp)/(2*dh) - (1 << (fp - 1))
 		if pos < 0 {
 			pos = 0
 		}
 		j := pos >> fp
-		fy := pos & (1<<fp - 1)
+		fy := int32((pos & (1<<fp - 1)) >> (fp - 8))
+		j1 := j + 1
 		if j >= ch-1 {
-			j, fy = ch-1, 0
+			j, j1, fy = ch-1, ch-1, 0
 		}
-		r0 := src[(cy+j)*srcStride:]
-		r1 := r0
-		if fy != 0 {
-			r1 = src[(cy+j+1)*srcStride:]
-		}
+		r0 := src[(cy+j)*srcStride : (cy+j)*srcStride+srcStride]
+		r1 := src[(cy+j1)*srcStride : (cy+j1)*srcStride+srcStride]
 		out := dst[y*dstStride : y*dstStride+dw*bpp]
+		iy := 256 - fy
+		if bpp == 1 {
+			for x := range out {
+				a, b := int32(r0[x0[x]]), int32(r0[x1[x]])
+				c, d := int32(r1[x0[x]]), int32(r1[x1[x]])
+				f := wx[x]
+				top := a*(256-f) + b*f
+				bot := c*(256-f) + d*f
+				out[x] = byte((top*iy + bot*fy + 32768) >> 16)
+			}
+			return
+		}
 		for x := 0; x < dw; x++ {
-			s := x0[x]
-			fx := wx[x]
-			for c := 0; c < bpp; c++ {
-				a := int(r0[s+c])
-				b := a
-				if fx != 0 {
-					b = int(r0[s+bpp+c])
-				}
-				top := a + ((b-a)*fx)>>fp
-				v := top
-				if fy != 0 {
-					a2 := int(r1[s+c])
-					b2 := a2
-					if fx != 0 {
-						b2 = int(r1[s+bpp+c])
-					}
-					bot := a2 + ((b2-a2)*fx)>>fp
-					v = top + ((bot-top)*fy)>>fp
-				}
-				out[x*bpp+c] = byte(v)
+			s0, s1, f := x0[x], x1[x], wx[x]
+			nf := 256 - f
+			for k := int32(0); k < 2; k++ {
+				top := int32(r0[s0+k])*nf + int32(r0[s1+k])*f
+				bot := int32(r1[s0+k])*nf + int32(r1[s1+k])*f
+				out[2*x+int(k)] = byte((top*iy + bot*fy + 32768) >> 16)
 			}
 		}
 	}

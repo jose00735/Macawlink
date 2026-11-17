@@ -10,6 +10,7 @@ import (
 
 	"github.com/jose00735/macawlink/windows/internal/app"
 	"github.com/jose00735/macawlink/windows/internal/config"
+	"github.com/jose00735/macawlink/windows/internal/pairing"
 )
 
 //go:embed assets/*
@@ -23,6 +24,9 @@ type API interface {
 	ApplySettings(config.Settings) error
 	ApplyPreset(string) error
 	RequestKeyframe()
+	PairDecision(accept bool) error
+	PairedPhones() []pairing.Phone
+	ForgetPhone(id string)
 }
 
 type options struct {
@@ -33,6 +37,7 @@ type options struct {
 }
 
 type state struct {
+	Paired   []pairing.Phone `json:"paired"`
 	Status   app.Status      `json:"status"`
 	Settings config.Settings `json:"settings"`
 	Options  options         `json:"options"`
@@ -51,6 +56,7 @@ func Handler(api API) http.Handler {
 	mux.HandleFunc("GET /api/state", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, state{
 			Status:   api.Status(),
+			Paired:   api.PairedPhones(),
 			Settings: api.Settings(),
 			Options: options{Resolutions: config.Resolutions, FrameRates: config.FrameRates,
 				SampleRates: config.SampleRates, Presets: config.PresetNames},
@@ -74,6 +80,17 @@ func Handler(api API) http.Handler {
 			return
 		}
 		writeJSON(w, http.StatusOK, api.Settings())
+	})
+	mux.HandleFunc("POST /api/pairing/{answer}", func(w http.ResponseWriter, r *http.Request) {
+		if err := api.PairDecision(r.PathValue("answer") == "accept"); err != nil {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	})
+	mux.HandleFunc("POST /api/paired/{id}/forget", func(w http.ResponseWriter, r *http.Request) {
+		api.ForgetPhone(r.PathValue("id"))
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	})
 	mux.HandleFunc("POST /api/keyframe", func(w http.ResponseWriter, r *http.Request) {
 		api.RequestKeyframe()

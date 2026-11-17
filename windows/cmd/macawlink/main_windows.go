@@ -26,7 +26,10 @@ import (
 	"github.com/jose00735/macawlink/windows/internal/audio"
 	"github.com/jose00735/macawlink/windows/internal/config"
 	"github.com/jose00735/macawlink/windows/internal/install"
+	"github.com/jose00735/macawlink/windows/internal/mdns"
 	"github.com/jose00735/macawlink/windows/internal/native"
+	"github.com/jose00735/macawlink/windows/internal/pairing"
+	"github.com/jose00735/macawlink/windows/internal/protocol"
 	"github.com/jose00735/macawlink/windows/internal/tray"
 	"github.com/jose00735/macawlink/windows/internal/vcam"
 	"github.com/jose00735/macawlink/windows/internal/web"
@@ -43,6 +46,7 @@ func main() {
 	addr := flag.String("addr", "", "connect to host:port directly instead of over USB/adb (e.g. a fake phone)")
 	serial := flag.String("serial", "", "adb serial of the phone to use when several are plugged in")
 	webAddr := flag.String("web", web.DefaultAddr, "address of the local settings page")
+	wifi := flag.Bool("wifi", true, "accept phones over Wi-Fi (TLS, paired with a code)")
 	flag.Parse()
 
 	exe, _ := os.Executable()
@@ -86,6 +90,23 @@ func main() {
 	if err != nil {
 		log.Printf("settings: %v (using defaults)", err)
 	}
+	// Wi-Fi: TLS identity, paired phones and mDNS advertisement.
+	var lastPairOpen time.Time
+	var identity *pairing.Identity
+	var pairs *pairing.Store
+	wifiAddr := ""
+	notify := make(chan [2]string, 4)
+	host, _ := os.Hostname()
+	if *wifi {
+		cfgDir, _ := config.Dir()
+		if identity, err = pairing.LoadOrCreateIdentity(cfgDir, host); err != nil {
+			log.Printf("wifi disabled: %v", err)
+		} else {
+			pairs = pairing.OpenStore(cfgDir)
+			wifiAddr = fmt.Sprintf(":%d", protocol.WiFiPort)
+		}
+	}
+
 	a := app.New(app.Options{
 		ExeDir:     exeDir,
 		Addr:       *addr,
@@ -99,6 +120,16 @@ func main() {
 		RingSources: []func() (*vcam.Ring, error){vcam.OpenGlobal, vcam.CreateLocal},
 		Camera:      cam,
 		SaveConfig:  true,
+		WiFiAddr:    wifiAddr,
+		Identity:    identity,
+		Pairs:       pairs,
+		OnPairing: func(phone, code string) {
+			notify <- [2]string{"Pair " + phone + "?", "Code " + code[:3] + " " + code[3:] + " — accept on the settings page if the phone shows the same code."}
+			if time.Since(lastPairOpen) > time.Minute { // don't keep popping browser tabs
+				lastPairOpen = time.Now()
+				openURL(url)
+			}
+		},
 	}, settings)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -115,7 +146,15 @@ func main() {
 		log.Printf("settings page on %s", url)
 	}
 
-	notify := make(chan [2]string, 4)
+	if identity != nil {
+		md := mdns.Start(mdns.Service{
+			Instance: "Macawlink on " + host,
+			Host:     mdns.HostLabel(host),
+			Port:     protocol.WiFiPort,
+			TXT:      map[string]string{"v": "1", "name": host, "fp": identity.ShortFP()},
+		})
+		defer md.Stop()
+	}
 	go watchPhase(ctx, a, notify)
 
 	err = tray.Run(tray.Options{
@@ -168,6 +207,7 @@ func menu(a *app.App, url, logFile string) []tray.Item {
 		{Title: "Quality", Sub: presets},
 		{Title: "Camera", Sub: []tray.Item{lens("back", "Back camera"), lens("front", "Front camera")}},
 		{Title: "Refresh picture", OnClick: a.RequestKeyframe},
+		{Title: "Wi-Fi && paired phones…", OnClick: func() { openURL(url) }},
 		{Separator: true},
 		{Title: "Open log folder", OnClick: func() { openURL(filepath.Dir(logFile)) }},
 		{Title: "Quit Macawlink", OnClick: tray.Quit},

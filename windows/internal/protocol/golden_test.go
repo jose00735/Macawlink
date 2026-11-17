@@ -39,3 +39,30 @@ func TestGoldenSettings(t *testing.T) {
 		t.Fatalf("defaults differ:\n go %+v\n kt %+v", config.Default(), s)
 	}
 }
+
+func TestGoldenSAS(t *testing.T) {
+	b, err := os.ReadFile("../../../proto-golden/pairing.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var g struct{ CertFP, PCNonce, PhoneNonce, SAS, Commit string }
+	var raw map[string]string
+	json.Unmarshal(b, &raw)
+	g.CertFP, g.PCNonce, g.PhoneNonce, g.SAS, g.Commit = raw["cert_fp"], raw["pc_nonce"], raw["phone_nonce"], raw["sas"], raw["commit"]
+	fp, _ := hex.DecodeString(g.CertFP)
+	pn, _ := hex.DecodeString(g.PCNonce)
+	ph, _ := hex.DecodeString(g.PhoneNonce)
+	sas, commit := SAS(fp, pn, ph), Commit(pn)
+	if len(sas) != 6 {
+		t.Fatalf("sas %q", sas)
+	}
+	if g.SAS == "" { // first run: record the expected values for the Kotlin test
+		raw["sas"], raw["commit"] = sas, commit
+		out, _ := json.Marshal(raw)
+		os.WriteFile("../../../proto-golden/pairing.json", append(out, '\n'), 0o644)
+		return
+	}
+	if sas != g.SAS || commit != g.Commit {
+		t.Fatalf("pairing derivation changed: sas %s want %s, commit %s want %s", sas, g.SAS, commit, g.Commit)
+	}
+}

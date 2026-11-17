@@ -4,8 +4,14 @@ package fakephone
 
 import (
 	"bytes"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"math"
 	"net"
@@ -17,6 +23,9 @@ import (
 )
 
 type Options struct {
+	PhoneID   string                 // Wi-Fi: phone identity
+	Token     string                 // Wi-Fi: token from an earlier pairing
+	Confirm   func(code string) bool // Wi-Fi pairing: phone user compares the code
 	Model     string
 	Settings  config.Settings
 	H264      []byte // Annex-B elementary stream to loop; nil = no video
@@ -27,6 +36,8 @@ type Options struct {
 
 // Received records what the PC sent to us.
 type Received struct {
+	Token      string // set after a successful pairing
+	Code       string // pairing code shown on the "phone"
 	mu         sync.Mutex
 	Types      []protocol.Type
 	SetConfigs []config.Settings
@@ -48,14 +59,100 @@ func (r *Received) add(p protocol.Packet) {
 	}
 }
 
+// Pairing returns the code shown and the token received (thread-safe).
+func (r *Received) Pairing() (code, token string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.Code, r.Token
+}
+
 func (r *Received) Snapshot() ([]protocol.Type, []config.Settings, int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]protocol.Type(nil), r.Types...), append([]config.Settings(nil), r.SetConfigs...), r.Keyframes
 }
 
-// Serve speaks the phone protocol on c until the PC disconnects or done closes.
+// Serve speaks the phone protocol on c (USB mode) until the PC disconnects or done closes.
 func Serve(c net.Conn, opt Options, rec *Received, done <-chan struct{}) error {
+	return serve(c, opt, rec, done, nil)
+}
+
+// DialWiFi connects like the app does over Wi-Fi: TLS 1.3 to the PC, pinning pinnedFP when
+// given (a paired PC), otherwise accepting any certificate and pairing.
+func DialWiFi(addr string, opt Options, rec *Received, done <-chan struct{}, pinnedFP []byte) error {
+	var seen []byte
+	cfg := &tls.Config{
+		MinVersion:         tls.VersionTLS13,
+		InsecureSkipVerify: true, // trust comes from pairing + pinning below
+		VerifyPeerCertificate: func(raw [][]byte, _ [][]*x509.Certificate) error {
+			sum := sha256.Sum256(raw[0])
+			seen = sum[:]
+			if pinnedFP != nil && !bytes.Equal(seen, pinnedFP) {
+				return errors.New("PC certificate changed")
+			}
+			return nil
+		},
+	}
+	c, err := tls.Dial("tcp", addr, cfg)
+	if err != nil {
+		return err
+	}
+	return serve(c, opt, rec, done, seen)
+}
+
+func awaitAck(c net.Conn, send func(protocol.Type, uint8, []byte) error, opt Options, rec *Received, certFP []byte) error {
+	var commit string
+	var myNonce []byte
+	for {
+		p, err := protocol.Read(c)
+		if err != nil {
+			return err
+		}
+		switch p.Type {
+		case protocol.HelloAck:
+			return nil
+		case protocol.Bye:
+			return errors.New("PC said bye: " + string(p.Payload))
+		case protocol.PairBegin:
+			var m protocol.PairBeginMsg
+			json.Unmarshal(p.Payload, &m)
+			commit = m.Commit
+			myNonce = make([]byte, 32)
+			rand.Read(myNonce)
+			b, _ := json.Marshal(protocol.PairNonceMsg{Nonce: hex.EncodeToString(myNonce)})
+			send(protocol.PairNonce, 0, b)
+		case protocol.PairReveal:
+			var m protocol.PairNonceMsg
+			json.Unmarshal(p.Payload, &m)
+			pcNonce, _ := hex.DecodeString(m.Nonce)
+			ok := protocol.Commit(pcNonce) == commit
+			code := protocol.SAS(certFP, pcNonce, myNonce)
+			if rec != nil {
+				rec.mu.Lock()
+				rec.Code = code
+				rec.mu.Unlock()
+			}
+			if ok && opt.Confirm != nil {
+				ok = opt.Confirm(code)
+			}
+			b, _ := json.Marshal(protocol.PairConfirmMsg{OK: ok})
+			send(protocol.PairConfirm, 0, b)
+		case protocol.PairResult:
+			var m protocol.PairResultMsg
+			json.Unmarshal(p.Payload, &m)
+			if !m.OK {
+				return errors.New("pairing failed: " + m.Reason)
+			}
+			if rec != nil {
+				rec.mu.Lock()
+				rec.Token = m.Token
+				rec.mu.Unlock()
+			}
+		}
+	}
+}
+
+func serve(c net.Conn, opt Options, rec *Received, done <-chan struct{}, certFP []byte) error {
 	defer c.Close()
 	var wmu sync.Mutex
 	seq := uint32(0)
@@ -71,8 +168,13 @@ func Serve(c net.Conn, opt Options, rec *Received, done <-chan struct{}) error {
 	hello, _ := json.Marshal(protocol.HelloMsg{
 		Model: opt.Model, Manufacturer: "Fake", AppVersion: "test", Protocol: 1,
 		Cameras: []protocol.CameraInfo{{ID: "0", Facing: "back", Sizes: [][2]int{{1280, 720}, {1920, 1080}}, FPS: []int{30, 60}}},
+		PhoneID: opt.PhoneID, Token: opt.Token,
 	})
 	if err := send(protocol.Hello, 0, hello); err != nil {
+		return err
+	}
+	// Wait for HELLO_ACK; on Wi-Fi the PC may run pairing first.
+	if err := awaitAck(c, send, opt, rec, certFP); err != nil {
 		return err
 	}
 	st, _ := json.Marshal(settings)

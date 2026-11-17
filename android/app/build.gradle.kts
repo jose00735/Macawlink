@@ -13,8 +13,8 @@ android {
         applicationId = "com.macawlink"
         minSdk = 29          // Android 10: Camera2 SessionConfiguration, MediaCodec B-frame control, thermal API
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
     }
 
     signingConfigs {

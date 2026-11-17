@@ -14,7 +14,8 @@ const (
 	Version     uint8  = 1
 	HeaderSize         = 16
 	MaxPayload         = 4 << 20 // 4 MiB
-	DefaultPort        = 47800
+	DefaultPort        = 47800   // USB: phone listens on loopback, PC dials through adb forward
+	WiFiPort           = 47802   // Wi-Fi: PC listens (TLS 1.3), phone dials
 	MDNSService        = "_macawlink._tcp"
 )
 
@@ -35,6 +36,11 @@ const (
 	Ping            Type = 0x40
 	Pong            Type = 0x41
 	Stats           Type = 0x42
+	PairBegin       Type = 0x50 // PC→phone {commit, pc_name}
+	PairNonce       Type = 0x51 // phone→PC {nonce}
+	PairReveal      Type = 0x52 // PC→phone {nonce}
+	PairConfirm     Type = 0x53 // phone→PC {ok}
+	PairResult      Type = 0x54 // PC→phone {ok, token, reason}
 	Bye             Type = 0x7F
 )
 

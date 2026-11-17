@@ -1,27 +1,41 @@
 package com.macawlink.session
 
+import android.view.Surface
 import com.macawlink.settings.StreamSettings
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 
 /** Process-wide state shared by the UI, the service and the PC link. */
 object SessionHub {
-    enum class Phase { STOPPED, WAITING_PC, STREAMING }
+    enum class Phase { STOPPED, WAITING_PC, CONNECTING, PAIRING, STREAMING }
 
     data class LinkState(
         val phase: Phase = Phase.STOPPED,
+        val transport: String = "",
         val pcName: String? = null,
         val width: Int = 0,
         val height: Int = 0,
         val fps: Double = 0.0,
         val kbps: Int = 0,
+        val targetKbps: Int = 0, // adaptive bitrate target (auto mode)
+        val thermal: Int = 0,
         val audioOn: Boolean = false,
         val error: String? = null,
     )
 
+    /** A PC to reach over Wi-Fi (from mDNS discovery or typed in). */
+    data class WifiTarget(val host: String, val port: Int, val name: String, val shortFp: String = "")
+
+    /** Shown while pairing: the user compares [code] with the PC screen. */
+    data class PairPrompt(val pcName: String, val code: String, val answer: CompletableDeferred<Boolean>)
+
     /** Single source of truth for settings: the UI and SET_CONFIG from the PC both write here. */
     val settings = MutableStateFlow(StreamSettings())
     val state = MutableStateFlow(LinkState())
+    val wifiTarget = MutableStateFlow<WifiTarget?>(null)
+    val pairing = MutableStateFlow<PairPrompt?>(null)
+    val previewSurface = MutableStateFlow<Surface?>(null)
 
     fun update(f: (LinkState) -> LinkState) = state.update(f)
 }

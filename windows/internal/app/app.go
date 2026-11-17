@@ -12,18 +12,20 @@ import (
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jose00735/macawlink/windows/internal/audio"
 	"github.com/jose00735/macawlink/windows/internal/config"
 	"github.com/jose00735/macawlink/windows/internal/native"
+	"github.com/jose00735/macawlink/windows/internal/pairing"
 	"github.com/jose00735/macawlink/windows/internal/protocol"
 	"github.com/jose00735/macawlink/windows/internal/transport"
 	"github.com/jose00735/macawlink/windows/internal/vcam"
 	"github.com/jose00735/macawlink/windows/internal/video"
 )
 
-const Version = "0.1.0"
+const Version = "0.2.0"
 
 // Phases shown in the UI.
 const (
@@ -58,6 +60,8 @@ type Status struct {
 	Since     time.Time             `json:"since"`
 	RTTms     float64               `json:"rtt_ms"`
 	Camera    CameraStatus          `json:"camera"`
+	WiFi      WiFiStatus            `json:"wifi"`
+	Pairing   *PairingStatus        `json:"pairing,omitempty"`
 	Video     video.Stats           `json:"video"`
 	Audio     audio.Stats           `json:"audio"`
 	Phone     protocol.StatsMsg     `json:"phone"`
@@ -75,6 +79,12 @@ type Options struct {
 	RingSources []func() (*vcam.Ring, error)
 	Camera      CameraStatus // filled by main after registering the virtual camera
 	SaveConfig  bool         // persist settings to %APPDATA% (off in tests)
+
+	// Wi-Fi (Phase 2). WiFiAddr "" disables it.
+	WiFiAddr  string
+	Identity  *pairing.Identity
+	Pairs     *pairing.Store
+	OnPairing func(phone, code string) // e.g. tray balloon + open the settings page
 }
 
 type App struct {
@@ -90,6 +100,10 @@ type App struct {
 	wmu sync.Mutex
 	seq uint32
 
+	active   atomic.Bool // one phone session at a time (USB or Wi-Fi)
+	pairing  *pairingState
+	pairFail map[string]time.Time // per-IP cool-down after a failed/declined pairing
+
 	video *video.Pipeline
 	audio *audio.Pipeline
 }
@@ -103,6 +117,13 @@ func New(opt Options, s config.Settings) *App {
 		RequestKeyframe: func() { a.send(protocol.RequestKeyframe, 0, nil) },
 		OnCodecFailed:   a.codecFailed,
 		Mirror:          func() bool { a.mu.Lock(); defer a.mu.Unlock(); return a.settings.Video.Mirror },
+		AudioDelay: func() time.Duration {
+			st := a.audio.Stats()
+			if st.Endpoint == "" {
+				return 0
+			}
+			return time.Duration(st.QueuedMs) * time.Millisecond
+		},
 	}
 	a.audio = &audio.Pipeline{
 		Open:   opt.OpenAudio,
@@ -134,6 +155,9 @@ func (a *App) setConnectedLocked(on bool) {
 // Run blocks until ctx ends.
 func (a *App) Run(ctx context.Context) {
 	go a.ringLoop(ctx)
+	if a.opt.WiFiAddr != "" && a.opt.Identity != nil && a.opt.Pairs != nil {
+		go a.wifiLoop(ctx)
+	}
 	a.connLoop(ctx)
 }
 
@@ -210,25 +234,44 @@ func (a *App) setPhase(phase, msg string) {
 
 func (a *App) connLoop(ctx context.Context) {
 	for ctx.Err() == nil {
+		if a.active.Load() { // a Wi-Fi session is running
+			sleep(ctx, time.Second)
+			continue
+		}
 		conn, hello, dev, err := a.connect(ctx)
 		if err != nil {
 			sleep(ctx, 2*time.Second)
 			continue
 		}
-		err = a.session(ctx, conn, hello, dev)
-		if err != nil && ctx.Err() == nil {
-			log.Printf("session ended: %v", err)
+		transportName := "USB"
+		if a.opt.Addr != "" {
+			transportName = "TCP " + a.opt.Addr
 		}
-		a.video.Reset()
-		a.audio.Reset()
-		a.mu.Lock()
-		a.conn = nil
-		a.setConnectedLocked(false)
-		a.status.Video, a.status.Phone, a.status.RTTms, a.status.Cameras = video.Stats{}, protocol.StatsMsg{}, 0, nil
-		a.mu.Unlock()
-		a.setPhase(PhaseWaitingApp, "Phone disconnected — reconnecting…")
+		if !a.active.CompareAndSwap(false, true) {
+			conn.Close()
+			continue
+		}
+		a.runSession(ctx, conn, hello, dev, transportName)
 		sleep(ctx, 1500*time.Millisecond)
 	}
+}
+
+// runSession streams until the phone leaves, then resets everything. a.active must be set.
+func (a *App) runSession(ctx context.Context, conn net.Conn, hello protocol.Packet, dev transport.Device, transportName string) {
+	defer a.active.Store(false)
+	err := a.session(ctx, conn, hello, dev, transportName)
+	if err != nil && ctx.Err() == nil {
+		log.Printf("session ended: %v", err)
+	}
+	a.video.Reset()
+	a.audio.Reset()
+	a.mu.Lock()
+	a.conn = nil
+	a.setConnectedLocked(false)
+	a.status.Video, a.status.Phone, a.status.RTTms, a.status.Cameras = video.Stats{}, protocol.StatsMsg{}, 0, nil
+	a.status.Transport = ""
+	a.mu.Unlock()
+	a.setPhase(PhaseWaitingApp, "Phone disconnected — waiting for it to reconnect…")
 }
 
 func (a *App) connect(ctx context.Context) (net.Conn, protocol.Packet, transport.Device, error) {
@@ -280,7 +323,7 @@ func (a *App) connect(ctx context.Context) (net.Conn, protocol.Packet, transport
 		if unauthorized {
 			a.setPhase(PhaseUnauthorized, "Tap “Allow USB debugging” on your phone")
 		} else {
-			a.setPhase(PhaseNoDevice, "Plug in your phone by USB (USB debugging on)")
+			a.setPhase(PhaseNoDevice, a.idleHint())
 		}
 		return nil, protocol.Packet{}, dev, errors.New("no device")
 	}
@@ -310,7 +353,7 @@ func (a *App) connect(ctx context.Context) (net.Conn, protocol.Packet, transport
 	return c, h, dev, nil
 }
 
-func (a *App) session(ctx context.Context, conn net.Conn, helloPkt protocol.Packet, dev transport.Device) error {
+func (a *App) session(ctx context.Context, conn net.Conn, helloPkt protocol.Packet, dev transport.Device, transportName string) error {
 	defer conn.Close()
 	var hello protocol.HelloMsg
 	if err := json.Unmarshal(helloPkt.Payload, &hello); err != nil {
@@ -324,10 +367,7 @@ func (a *App) session(ctx context.Context, conn net.Conn, helloPkt protocol.Pack
 	a.conn = conn
 	a.seq = 0
 	a.status.Device, a.status.Serial, a.status.Cameras = name, dev.Serial, hello.Cameras
-	a.status.Transport = "USB"
-	if a.opt.Addr != "" {
-		a.status.Transport = "TCP " + a.opt.Addr
-	}
+	a.status.Transport = transportName
 	a.setConnectedLocked(true)
 	a.mu.Unlock()
 	host, _ := os.Hostname()
@@ -537,6 +577,10 @@ func (a *App) Status() Status {
 	defer a.mu.Unlock()
 	st := a.status
 	st.Video, st.Audio = v, au
+	if a.pairing != nil && a.pairing.status.Code != "" {
+		ps := a.pairing.status
+		st.Pairing = &ps
+	}
 	return st
 }
 

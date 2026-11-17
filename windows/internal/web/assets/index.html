@@ -87,6 +87,13 @@
   #toast.show { opacity: 1; }
   .badge { font: 11px var(--mono); padding: 2px 8px; border-radius: 6px; border: 1px solid var(--line); color: var(--dim); }
   .badge.on { color: var(--ok); border-color: var(--ok); }
+  .modal { position: fixed; inset: 0; background: rgba(5,2,15,.78); backdrop-filter: blur(4px); display: grid; place-items: center; z-index: 5; }
+  .modal[hidden] { display: none; }
+  .modal .card { background: var(--panel); border: 1px solid var(--magenta); border-radius: 16px; padding: 26px 30px; max-width: 420px;
+    box-shadow: 0 0 40px rgba(255,43,214,.35); text-align: center; }
+  .code { font: 700 46px var(--mono); letter-spacing: .25em; color: var(--cyan); text-shadow: 0 0 16px rgba(0,240,255,.6); margin: 14px 0; }
+  .phone { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-top: 1px solid rgba(44,27,94,.6); font-family: var(--mono); font-size: 13px; }
+  .phone button { padding: 6px 10px; font-size: 11px; }
 </style>
 </head>
 <body>
@@ -129,6 +136,17 @@
     </dl>
     <div class="meter"><b id="level"></b></div>
     <p class="hint" id="michint"></p>
+  </section>
+
+  <section>
+    <h2>Wi-Fi</h2>
+    <dl>
+      <dt>Status</dt><dd id="wstate">—</dd>
+      <dt>Address</dt><dd id="waddr">—</dd>
+      <dt>PC code</dt><dd id="wcode">—</dd>
+    </dl>
+    <p class="hint">In the phone app tap <code>Connect over Wi-Fi</code> and pick this PC (or type the address). The first time, both screens show a 6-digit code: accept here only if it matches the phone.</p>
+    <div id="paired"></div>
   </section>
 
   <section class="wide">
@@ -174,6 +192,19 @@
   </section>
 </main>
 <div id="toast"></div>
+<div id="pairbox" class="modal" hidden>
+  <div class="card">
+    <h2>Pair a phone</h2>
+    <p id="pairphone"></p>
+    <div id="paircode" class="code"></div>
+    <p class="hint">Accept only if the phone shows exactly the same code.</p>
+    <p class="hint" id="pairphoneok"></p>
+    <div class="presets">
+      <button id="pairyes">Codes match · Accept</button>
+      <button class="ghost" id="pairno">Reject</button>
+    </div>
+  </div>
+</div>
 
 <script>
 const $ = id => document.getElementById(id);
@@ -227,6 +258,27 @@ async function apply() {
   if (r.ok) settings = await r.json(); else { toast((await r.json()).error); fill(); }
 }
 
+let lastPairCode = "";
+function showWifi(st, paired) {
+  const w = st.wifi || {};
+  $("wstate").innerHTML = w.enabled ? (w.error ? `<span class="badge">ERROR</span>` : `<span class="badge on">LISTENING</span>`) : "off";
+  $("waddr").textContent = w.enabled && w.addresses && w.addresses.length ? w.addresses.map(a => a + ":" + w.port).join(", ") : "—";
+  $("wcode").textContent = w.pc_code || "—";
+  $("paired").innerHTML = (paired || []).length ? "<p class='hint'>Paired phones</p>" + paired.map(p =>
+    `<div class="phone"><span>${p.name.replace(/[<>&]/g, "")}</span><button class="ghost" data-forget="${encodeURIComponent(p.id)}">Forget</button></div>`).join("") : "";
+  const pr = st.pairing;
+  $("pairbox").hidden = !pr;
+  if (pr) {
+    $("pairphone").textContent = `${pr.phone} wants to connect over Wi-Fi.`;
+    $("paircode").textContent = pr.code.slice(0, 3) + " " + pr.code.slice(3);
+    $("pairphoneok").textContent = pr.phone_ok ? "✓ Confirmed on the phone" : "Waiting for the phone to confirm…";
+    lastPairCode = pr.code;
+  }
+}
+$("pairyes").onclick = () => fetch("/api/pairing/accept", {method: "POST", headers: H}).then(() => toast("Accepted"));
+$("pairno").onclick = () => fetch("/api/pairing/reject", {method: "POST", headers: H}).then(() => toast("Rejected"));
+$("paired").onclick = e => { const id = e.target.dataset.forget; if (id) fetch(`/api/paired/${id}/forget`, {method: "POST", headers: H}).then(() => toast("Forgotten")); };
+
 function show(st) {
   const pill = $("pill");
   pill.className = "pill " + (st.phase === "streaming" ? "ok" : (st.phase === "no-adb" ? "bad" : ""));
@@ -264,11 +316,12 @@ async function tick() {
     if (!built) build(s.options);
     if (Date.now() > editingUntil) { settings = s.settings; fill(); }
     show(s.status);
+    showWifi(s.status, s.paired);
   } catch (e) {
     $("pill").className = "pill bad"; $("msg").textContent = "Macawlink is not running";
   }
 }
-tick(); setInterval(tick, 1000);
+tick(); setInterval(tick, 700);
 </script>
 </body>
 </html>

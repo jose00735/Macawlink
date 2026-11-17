@@ -53,6 +53,8 @@ class CameraController(
     private var lastCsd = ByteArray(0)
     @Volatile private var rotation = 0
     private var generation = 0
+    private var preview: android.view.Surface? = null
+    private var previewInSession = false
 
     private val orientation = object : OrientationEventListener(context) {
         override fun onOrientationChanged(deg: Int) {
@@ -103,6 +105,19 @@ class CameraController(
 
     fun requestKeyframe() = handler.post { encoder?.requestKeyframe() }
 
+    /** Adaptive bitrate: set the encoder rate without restarting (kbps). */
+    fun setBitrate(kbps: Int) = handler.post { encoder?.setBitrate(kbps) }
+
+    /** Shows (or hides, with null) a live preview on the phone; rebuilds the capture session. */
+    fun setPreview(surface: android.view.Surface?) = handler.post {
+        if (surface == preview) return@post
+        preview = surface
+        val s = current ?: return@post
+        if (device != null) { close(); open(s) }
+    }
+
+    fun encodedSize(): Pair<Int, Int> = actual.width to actual.height
+
     fun stop() = handler.post { close() }
 
     fun release() {
@@ -148,18 +163,27 @@ class CameraController(
                 if (gen != generation) { camera.close(); return }
                 device = camera
                 val surface = enc.inputSurface ?: return
-                val cfg = SessionConfiguration(SessionConfiguration.SESSION_REGULAR,
-                    listOf(OutputConfiguration(surface)), executor,
-                    object : CameraCaptureSession.StateCallback() {
-                        override fun onConfigured(s2: CameraCaptureSession) {
-                            if (gen != generation) { s2.close(); return }
-                            session = s2
-                            repeat(s, range)
-                            onStarted(size.width, size.height, range.upper, codecName)
-                        }
-                        override fun onConfigureFailed(s2: CameraCaptureSession) = onError("Camera session failed")
-                    })
-                camera.createCaptureSession(cfg)
+                fun configure(withPreview: Boolean) {
+                    val outputs = mutableListOf(OutputConfiguration(surface))
+                    val pv = preview?.takeIf { withPreview && it.isValid }
+                    if (pv != null) outputs += OutputConfiguration(pv)
+                    val cfg = SessionConfiguration(SessionConfiguration.SESSION_REGULAR, outputs, executor,
+                        object : CameraCaptureSession.StateCallback() {
+                            override fun onConfigured(s2: CameraCaptureSession) {
+                                if (gen != generation) { s2.close(); return }
+                                session = s2
+                                previewInSession = pv != null
+                                repeat(s, range)
+                                onStarted(size.width, size.height, range.upper, codecName)
+                            }
+                            override fun onConfigureFailed(s2: CameraCaptureSession) {
+                                // Some phones can't feed encoder + preview at this size: stream without preview.
+                                if (pv != null && gen == generation) configure(false) else onError("Camera session failed")
+                            }
+                        })
+                    camera.createCaptureSession(cfg)
+                }
+                configure(true)
             }
             override fun onDisconnected(camera: CameraDevice) {
                 camera.close()
@@ -184,6 +208,7 @@ class CameraController(
         val ch = manager.getCameraCharacteristics(cameraId!!)
         val req = dev.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
             addTarget(surface)
+            if (previewInSession) preview?.takeIf { it.isValid }?.let { addTarget(it) }
             set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, range)
             set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
             set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)

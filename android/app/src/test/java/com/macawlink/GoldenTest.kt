@@ -53,3 +53,17 @@ class GoldenTest {
         assertEquals(640 to 480, CameraController.pickSize(listOf(1920 to 1080, 640 to 480), 800, 600)) // 4:3 kept
     }
 }
+
+class PairingGoldenTest {
+    @org.junit.Test
+    fun sasMatchesGo() {
+        val g = kotlinx.serialization.json.Json.parseToJsonElement(java.io.File("../../proto-golden/pairing.json").readText())
+            as kotlinx.serialization.json.JsonObject
+        fun s(k: String) = (g[k] as kotlinx.serialization.json.JsonPrimitive).content
+        val fp = com.macawlink.protocol.Pairing.unhex(s("cert_fp"))
+        val pc = com.macawlink.protocol.Pairing.unhex(s("pc_nonce"))
+        val ph = com.macawlink.protocol.Pairing.unhex(s("phone_nonce"))
+        org.junit.Assert.assertEquals(s("sas"), com.macawlink.protocol.Pairing.sas(fp, pc, ph))
+        org.junit.Assert.assertEquals(s("commit"), com.macawlink.protocol.Pairing.commit(pc))
+    }
+}

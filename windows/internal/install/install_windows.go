@@ -171,7 +171,15 @@ func Install(srcDir string) error {
 		}
 	}
 	shortcut(filepath.Join(dst, "macawlink.exe"))
+	firewall(filepath.Join(dst, "macawlink.exe"))
 	return nil
+}
+
+// firewall lets phones on private (home/office) networks reach the Wi-Fi port and mDNS.
+func firewall(exe string) {
+	run("netsh", "advfirewall", "firewall", "delete", "rule", "name=Macawlink")
+	run("netsh", "advfirewall", "firewall", "add", "rule", "name=Macawlink", "dir=in", "action=allow",
+		"program="+exe, "enable=yes", "profile=private,domain")
 }
 
 // Uninstall removes registration and the shortcut; files are removed after we exit.
@@ -186,6 +194,7 @@ func Uninstall(exeDir string) error {
 		regsvr32("/u", "/s", filepath.Join(exeDir, DLL32))
 	}
 	os.Remove(shortcutPath())
+	run("netsh", "advfirewall", "firewall", "delete", "rule", "name=Macawlink")
 	if strings.EqualFold(filepath.Clean(exeDir), filepath.Clean(Dir())) {
 		cmd := exec.Command("cmd", "/c", "ping -n 3 127.0.0.1 >nul & rmdir /s /q \""+Dir()+"\"")
 		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}

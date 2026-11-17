@@ -43,6 +43,7 @@ class PcLink(private val port: Int = Proto.DEFAULT_PORT) {
 
 /** One PC connection. Sends go through a writer thread so encoders never block on the socket. */
 class Connection(private val socket: Socket) {
+    val remote: String = socket.inetAddress?.hostAddress ?: ""
     private val out = DataOutputStream(BufferedOutputStream(socket.getOutputStream(), 256 * 1024))
     private val inp = DataInputStream(BufferedInputStream(socket.getInputStream(), 64 * 1024))
     private val queue = LinkedBlockingQueue<Packet>()
@@ -85,6 +86,9 @@ class Connection(private val socket: Socket) {
     }
 
     fun read(): Packet = inp.readPacket()
+
+    /** Bytes waiting to be sent: the congestion signal for adaptive bitrate. */
+    fun queued(): Long = queuedBytes.get()
 
     fun close() {
         if (closed) return

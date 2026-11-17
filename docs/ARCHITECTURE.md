@@ -61,6 +61,7 @@ and mic were plugged in:
 - Windows 10 has no virtual-camera API, so the same DLL also contains a **DirectShow video capture filter**. It is registered in the video input device category, which is how OBS Virtual Camera appears too.
 - Apps load it into their own process: Chrome/Edge (and WebView2 apps like the new Teams), Zoom, Discord and OBS. It reads the **session-local** ring `Local\Macawlink.Video`, which `macawlink.exe` creates at startup.
 - It is a single capture pin with `IAMStreamConfig` (9 formats: 720p/1080p/480p × YUY2/NV12/I420, 5–60 fps) and `IKsPropertySet` (pin category capture). Samples are pushed through the downstream allocator from a paced worker thread.
+- **Limit:** Microsoft Store apps on Windows 10 (the Camera app, error `NoCamerasAreAttached`) enumerate only kernel-streaming devices. Reaching them needs an AVStream kernel driver (Phase 3, same signing requirement as the microphone driver).
 - A 32-bit build (`macawlink_native32.dll`, registered with SysWOW64 `regsvr32`) covers 32-bit apps.
 - `DllRegisterServer` adds the DirectShow device **only when the MF virtual camera is unavailable**, so Windows 11 never lists the camera twice.
 - Go publishes each frame to every open ring at the size that ring's app asked for.
@@ -102,7 +103,9 @@ windows/
 ├── cmd/macawlink      tray app; --install / --uninstall; --addr (direct TCP); --serial
 ├── cmd/fakephone      phone emulator for testing without a device
 ├── internal/app       connection loop, session, status, settings API
-├── internal/video     pipeline + NV12 rotate / crop-scale (bilinear, mirror)
+├── internal/video     pipeline + NV12 rotate / crop-scale (bilinear, mirror, parallel bands), A/V sync delay
+├── internal/mdns      DNS-SD responder for _macawlink._tcp (stdlib only)
+├── internal/pairing   TLS identity, paired-phone store
 ├── internal/audio     pipeline: PCM, gain, latency window (drop >120 ms, pad on underrun), level meter
 ├── internal/vcam      shared-memory ring writer
 ├── internal/native    syscall bindings to macawlink_native.dll (no cgo)
@@ -137,8 +140,24 @@ Changeable from the phone, the tray (presets, lens) or the settings page. All ch
 Presets: **Low** (480p30, 1.5 Mbps, 16 kHz), **Meeting** (720p30 auto, 48 kHz mono), **Max** (1080p60 20 Mbps VBR, 48 kHz stereo raw).
 
 ## 6. Connection
-- **USB (Phase 1):** the phone listens on loopback `127.0.0.1:47800` only, so nothing is exposed on the network. The PC runs the bundled `adb forward`.
-- **Wi-Fi (Phase 2):** mDNS `_macawlink._tcp`, QR pairing, TLS 1.3 with certificate pinning, Opus audio.
+- **USB:** the phone listens on loopback `127.0.0.1:47800` only, so nothing is exposed on the network. The PC runs the bundled `adb forward`.
+- **Wi-Fi:** the PC listens with **TLS 1.3** on `:47802` and advertises itself over **mDNS** (`internal/mdns`, our own responder on every IPv4 interface). The phone finds PCs with `NsdManager`, or the user types an address, and keeps reconnecting with backoff.
+  - **Pairing:** numeric comparison with commitment (see PROTOCOL.md). Both screens show a 6-digit code bound to the certificate fingerprint, and both users confirm. Typed codes would need TLS key export, which Android only has from version 12.
+  - **Identity:** the PC's ECDSA P-256 certificate lives in `%APPDATA%\Macawlink\tls.pem`, and paired phones (token hashes) in `paired.json`. The phone pins the fingerprint.
+  - **Firewall:** the installer adds an inbound rule for `macawlink.exe` on private and domain networks.
+- One phone session at a time, whichever transport connects first. The other side gets `BYE busy`.
+- Audio stays PCM on Wi-Fi: 0.77 Mbps for 48 kHz mono is small next to video (3–20 Mbps). Opus is planned for constrained networks.
+
+### Adaptive quality (phone)
+- **Auto bitrate** runs every 0.5 s on the size of the send queue. Over 512 KB queued it drops the bitrate by 25%. After 4 s with a near-empty queue it raises it by 10%, up to the ~0.1 bpp ceiling. The ceiling is applied live with `PARAMETER_KEY_VIDEO_BITRATE`, with no encoder restart.
+- **Thermal step-down:** the ceiling is capped at 75% when the phone is moderately hot (thermal status MODERATE) and at 50% from SEVERE. This applies to fixed bitrates too. The UI shows it.
+- If the queue overflows, frames are skipped until the next requested keyframe.
+
+### A/V sync (PC)
+Video is held back by the audio currently queued in the virtual mic (0–200 ms) so lips match the voice. A pool of 12 frame buffers bounds memory, and if it runs out, frames are published immediately.
+
+### Phone preview
+Optional. The UI's `SurfaceView` becomes a second output of the Camera2 session, sized like the encoder. If the device can't run both at that size, the session is rebuilt without the preview.
 
 ## 7. Latency and sync
 - Low-latency MediaCodec settings, no B-frames, a realtime-priority encoder, `CODECAPI_AVLowLatencyMode` on the decoder, and TCP_NODELAY on both ends.
@@ -165,5 +184,5 @@ Presets: **Low** (480p30, 1.5 Mbps, 16 kHz), **Meeting** (720p30 auto, 48 kHz mo
 | | Minimum |
 |---|---|
 | Android | 10 (API 29) |
-| Windows | 10 (DirectShow camera: browsers, Zoom, Teams, OBS) or 11 (virtual camera: every app) |
+| Windows | 10 (DirectShow camera: desktop apps, not Microsoft Store apps such as Camera) or 11 (virtual camera: every app) |
 | PC | any x64; hardware-accelerated decode used when the MF decoder provides it |

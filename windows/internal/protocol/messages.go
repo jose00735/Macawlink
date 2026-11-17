@@ -2,9 +2,12 @@ package protocol
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 )
 
 // HelloMsg is sent by the phone right after the PC connects.
@@ -14,6 +17,8 @@ type HelloMsg struct {
 	AppVersion   string       `json:"app_version"`
 	Protocol     int          `json:"protocol"`
 	Cameras      []CameraInfo `json:"cameras"`
+	PhoneID      string       `json:"phone_id,omitempty"` // Wi-Fi: stable random id of this phone
+	Token        string       `json:"token,omitempty"`    // Wi-Fi: secret from a previous pairing
 }
 
 type CameraInfo struct {
@@ -108,4 +113,43 @@ func ParsePong(b []byte) (sentNs, peerNs int64, err error) {
 		return 0, 0, errors.New("protocol: short pong")
 	}
 	return int64(binary.BigEndian.Uint64(b)), int64(binary.BigEndian.Uint64(b[8:])), nil
+}
+
+// ---- Wi-Fi pairing (numeric comparison with commitment, like Bluetooth) ----
+
+type PairBeginMsg struct {
+	Commit string `json:"commit"` // hex SHA-256 of the PC nonce
+	PCName string `json:"pc_name"`
+}
+
+type PairNonceMsg struct {
+	Nonce string `json:"nonce"` // hex, 32 bytes
+}
+
+type PairConfirmMsg struct {
+	OK bool `json:"ok"`
+}
+
+type PairResultMsg struct {
+	OK     bool   `json:"ok"`
+	Token  string `json:"token,omitempty"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// SAS is the 6-digit code both screens show. certFP is the SHA-256 of the PC's TLS
+// certificate (DER) as each side sees it; a man in the middle changes it on one side.
+func SAS(certFP, pcNonce, phoneNonce []byte) string {
+	h := sha256.New()
+	h.Write([]byte("macawlink-pair-v1"))
+	h.Write(certFP)
+	h.Write(pcNonce)
+	h.Write(phoneNonce)
+	sum := h.Sum(nil)
+	return fmt.Sprintf("%06d", binary.BigEndian.Uint32(sum[:4])%1000000)
+}
+
+// Commit returns hex(SHA-256(nonce)).
+func Commit(nonce []byte) string {
+	sum := sha256.Sum256(nonce)
+	return hex.EncodeToString(sum[:])
 }

@@ -10,7 +10,8 @@ object Proto {
     const val VERSION: Int = 1
     const val HEADER_SIZE = 16
     const val MAX_PAYLOAD = 4 shl 20
-    const val DEFAULT_PORT = 47800
+    const val DEFAULT_PORT = 47800 // USB: we listen on loopback
+    const val WIFI_PORT = 47802    // Wi-Fi: the PC listens (TLS 1.3)
     const val MDNS_SERVICE = "_macawlink._tcp."
 
     const val FLAG_KEYFRAME = 1
@@ -24,6 +25,7 @@ enum class MsgType(val code: Int) {
     AUDIO_CONFIG(0x20), AUDIO_FRAME(0x21),
     SET_CONFIG(0x30), CONFIG_STATE(0x31), REQUEST_KEYFRAME(0x32), CAMERA_CONTROL(0x33),
     PING(0x40), PONG(0x41), STATS(0x42),
+    PAIR_BEGIN(0x50), PAIR_NONCE(0x51), PAIR_REVEAL(0x52), PAIR_CONFIRM(0x53), PAIR_RESULT(0x54),
     BYE(0x7F);
 
     companion object {

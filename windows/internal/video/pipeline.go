@@ -31,6 +31,7 @@ type Stats struct {
 	Decoded     uint64  `json:"decoded"`
 	Errors      uint64  `json:"errors"`
 	LastError   string  `json:"last_error,omitempty"`
+	SyncDelayMs int     `json:"sync_delay_ms"`
 }
 
 type Pipeline struct {
@@ -39,6 +40,13 @@ type Pipeline struct {
 	RequestKeyframe func()
 	OnCodecFailed   func(codec string) // e.g. HEVC extension missing → ask phone for H.264
 	Mirror          func() bool
+	// AudioDelay is how much audio is buffered ahead of the speakers; video is held back by
+	// the same amount so lips match the voice (A/V sync). nil or ≤8 ms = no delay.
+	AudioDelay func() time.Duration
+
+	delayQ chan delayed
+	pool   chan []byte
+	gen    uint64
 
 	mu        sync.Mutex
 	dec       native.Decoder
@@ -158,7 +166,68 @@ func (p *Pipeline) drain() error {
 		}
 		p.stats.Decoded++
 		p.winFrames++
-		p.output(p.frame[:w*h*3/2], w, h, pts)
+		p.schedule(p.frame[:w*h*3/2], w, h, pts)
+	}
+}
+
+type delayed struct {
+	buf  []byte
+	w, h int
+	pts  int64
+	due  time.Time
+	gen  uint64
+}
+
+const maxSyncDelay = 200 * time.Millisecond
+
+// schedule publishes now, or after the audio delay. Called with p.mu held.
+func (p *Pipeline) schedule(nv12 []byte, w, h int, pts int64) {
+	var d time.Duration
+	if p.AudioDelay != nil {
+		d = p.AudioDelay()
+	}
+	if d > maxSyncDelay {
+		d = maxSyncDelay
+	}
+	p.stats.SyncDelayMs = int(d / time.Millisecond)
+	if d <= 8*time.Millisecond {
+		p.output(nv12, w, h, pts)
+		return
+	}
+	if p.delayQ == nil {
+		p.delayQ = make(chan delayed, 16)
+		p.pool = make(chan []byte, 16)
+		for i := 0; i < 12; i++ {
+			p.pool <- nil
+		}
+		go p.delayLoop()
+	}
+	var buf []byte
+	select {
+	case buf = <-p.pool:
+	default:
+		p.output(nv12, w, h, pts) // too far behind: don't queue more
+		return
+	}
+	if cap(buf) < len(nv12) {
+		buf = make([]byte, len(nv12))
+	}
+	buf = buf[:len(nv12)]
+	copy(buf, nv12)
+	p.delayQ <- delayed{buf: buf, w: w, h: h, pts: pts, due: time.Now().Add(d), gen: p.gen}
+}
+
+func (p *Pipeline) delayLoop() {
+	for it := range p.delayQ {
+		if wait := time.Until(it.due); wait > 0 {
+			time.Sleep(wait)
+		}
+		p.mu.Lock()
+		if it.gen == p.gen {
+			p.output(it.buf, it.w, it.h, it.pts)
+		}
+		p.mu.Unlock()
+		p.pool <- it.buf
 	}
 }
 
@@ -252,6 +321,7 @@ func (p *Pipeline) Reset() {
 		p.dec.Close()
 		p.dec = nil
 	}
+	p.gen++ // frames still waiting in the sync queue are dropped
 	p.stats = Stats{}
 	p.winStart = time.Time{}
 	p.winFrames, p.winBytes = 0, 0
