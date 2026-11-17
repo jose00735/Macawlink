@@ -1,0 +1,20 @@
+# Go
+windows/*.exe
+windows/dist/
+
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+*.apk
+*.aab
+
+# Native
+windows/vcam-native/x64/
+windows/vcam-native/.vs/
+*.obj
+*.pdb
+
+.DS_Store

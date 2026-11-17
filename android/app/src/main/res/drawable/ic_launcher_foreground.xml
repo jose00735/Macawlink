@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Old-fashioned eyeball webcam, traced from assets/icon/macawlink.svg (512 grid scaled into the 108dp adaptive canvas). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group android:scaleX="0.16" android:scaleY="0.16"
+        android:translateX="13" android:translateY="12">
+        <!-- cable -->
+        <path android:pathData="M352,300 C420,320 430,400 380,430 S300,470 270,452"
+            android:strokeColor="#0A2E63" android:strokeWidth="14" android:strokeLineCap="round"
+            android:fillColor="#00000000" />
+        <!-- neck + foot -->
+        <path android:fillColor="#D6CFBC"
+            android:pathData="M248,318 h16 a12,12 0 0 1 12,12 v46 a12,12 0 0 1 -12,12 h-16 a12,12 0 0 1 -12,-12 v-46 a12,12 0 0 1 12,-12 z" />
+        <path android:fillColor="#D6CFBC"
+            android:pathData="M152,398 a104,28 0 1,0 208,0 a104,28 0 1,0 -208,0 z" />
+        <!-- shell -->
+        <path android:fillColor="#EDE8DB" android:strokeColor="#8C836C" android:strokeWidth="4"
+            android:pathData="M124,214 a132,132 0 1,0 264,0 a132,132 0 1,0 -264,0 z" />
+        <!-- yellow bezel -->
+        <path android:fillColor="#FFC21A" android:strokeColor="#C98F00" android:strokeWidth="5"
+            android:pathData="M178,214 a78,78 0 1,0 156,0 a78,78 0 1,0 -156,0 z" />
+        <!-- glass -->
+        <path android:fillColor="#121826"
+            android:pathData="M200,214 a56,56 0 1,0 112,0 a56,56 0 1,0 -112,0 z" />
+        <path android:fillColor="#1F2C44"
+            android:pathData="M226,214 a30,30 0 1,0 60,0 a30,30 0 1,0 -60,0 z" />
+        <path android:fillColor="#05070C"
+            android:pathData="M242,214 a14,14 0 1,0 28,0 a14,14 0 1,0 -28,0 z" />
+        <path android:fillColor="#CCFFFFFF"
+            android:pathData="M222,192 a14,9 0 1,0 28,0 a14,9 0 1,0 -28,0 z" />
+        <!-- red LED -->
+        <path android:fillColor="#E8262B"
+            android:pathData="M245,110 a11,11 0 1,0 22,0 a11,11 0 1,0 -22,0 z" />
+    </group>
+</vector>

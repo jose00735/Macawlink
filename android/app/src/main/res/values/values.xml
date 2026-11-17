@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Macawlink</string>
+    <string name="notif_channel">Streaming</string>
+    <string name="notif_streaming">Streaming camera and mic to your PC</string>
+    <string name="action_stop">Stop</string>
+
+    <color name="ic_launcher_background">#1B6FD1</color>
+    <color name="macaw_blue">#1B6FD1</color>
+    <color name="macaw_yellow">#FFC21A</color>
+    <color name="macaw_red">#E8262B</color>
+
+    <style name="Theme.Macawlink" parent="android:Theme.Material.NoActionBar" />
+</resources>
