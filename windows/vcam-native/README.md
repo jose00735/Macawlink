@@ -8,7 +8,7 @@ Windows 11 virtual camera API. No kernel driver, no driver signing.
 2. Advertise the format menu from `docs/ARCHITECTURE.md §2.1` (NV12 and YUY2).
 3. On each `RequestSample`, copy the newest slot from the shared ring
    (`include/macawlink_ring.h`) into an `IMFSample`; if `connected == 0`, emit the
-   built-in "Waiting for phone…" frame (Macawlink webcam icon on dark blue).
+   built-in "Waiting for phone…" frame (Macawlink orb-cam icon on deep violet with a neon grid).
 4. Convert NV12 → YUY2 when the app picks YUY2.
 
 ## Registration

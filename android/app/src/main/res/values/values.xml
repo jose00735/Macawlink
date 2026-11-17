@@ -5,10 +5,13 @@
     <string name="notif_streaming">Streaming camera and mic to your PC</string>
     <string name="action_stop">Stop</string>
 
-    <color name="ic_launcher_background">#1B6FD1</color>
-    <color name="macaw_blue">#1B6FD1</color>
-    <color name="macaw_yellow">#FFC21A</color>
-    <color name="macaw_red">#E8262B</color>
+    <color name="ic_launcher_background">#0D0522</color>
+    <!-- cyberpunk palette (matches assets/icon/macawlink.svg) -->
+    <color name="neon_cyan">#00F0FF</color>
+    <color name="neon_magenta">#FF2BD6</color>
+    <color name="neon_violet">#7B2CFF</color>
+    <color name="deep_violet">#0D0522</color>
+    <color name="gunmetal">#1D2033</color>
 
     <style name="Theme.Macawlink" parent="android:Theme.Material.NoActionBar" />
 </resources>

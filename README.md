@@ -19,7 +19,7 @@ Wi-Fi) and every app — Teams, Zoom, Meet, OBS, Discord — sees **"Macawlink C
 ```
 android/     Kotlin app (Gradle)
 windows/     Go receiver  ·  vcam-native/ (C++ MF virtual camera)  ·  vmic-driver/
-assets/icon/ Old-fashioned webcam icon (SVG, PNG, ICO)
+assets/icon/ Futuristic cyberpunk orb-cam icon (SVG, PNG, ICO)
 docs/
 ```
 

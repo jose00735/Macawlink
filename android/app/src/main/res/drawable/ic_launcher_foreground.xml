@@ -1,38 +1,111 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Old-fashioned eyeball webcam, traced from assets/icon/macawlink.svg (512 grid scaled into the 108dp adaptive canvas). -->
+<!-- Futuristic orb webcam, cyberpunk palette — traced from assets/icon/macawlink.svg
+     (512 grid scaled into the 108dp adaptive canvas). Vector drawables have no blur, so neon
+     glows are approximated with translucent strokes. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
     <group android:scaleX="0.16" android:scaleY="0.16"
         android:translateX="13" android:translateY="12">
-        <!-- cable -->
-        <path android:pathData="M352,300 C420,320 430,400 380,430 S300,470 270,452"
-            android:strokeColor="#0A2E63" android:strokeWidth="14" android:strokeLineCap="round"
+
+        <!-- cable: dark sheath + cyan core -->
+        <path android:pathData="M356,300 C430,320 440,400 388,430 S300,470 268,452"
+            android:strokeColor="#0A0616" android:strokeWidth="16" android:strokeLineCap="round"
             android:fillColor="#00000000" />
-        <!-- neck + foot -->
-        <path android:fillColor="#D6CFBC"
-            android:pathData="M248,318 h16 a12,12 0 0 1 12,12 v46 a12,12 0 0 1 -12,12 h-16 a12,12 0 0 1 -12,-12 v-46 a12,12 0 0 1 12,-12 z" />
-        <path android:fillColor="#D6CFBC"
-            android:pathData="M152,398 a104,28 0 1,0 208,0 a104,28 0 1,0 -208,0 z" />
-        <!-- shell -->
-        <path android:fillColor="#EDE8DB" android:strokeColor="#8C836C" android:strokeWidth="4"
-            android:pathData="M124,214 a132,132 0 1,0 264,0 a132,132 0 1,0 -264,0 z" />
-        <!-- yellow bezel -->
-        <path android:fillColor="#FFC21A" android:strokeColor="#C98F00" android:strokeWidth="5"
-            android:pathData="M178,214 a78,78 0 1,0 156,0 a78,78 0 1,0 -156,0 z" />
-        <!-- glass -->
-        <path android:fillColor="#121826"
-            android:pathData="M200,214 a56,56 0 1,0 112,0 a56,56 0 1,0 -112,0 z" />
-        <path android:fillColor="#1F2C44"
-            android:pathData="M226,214 a30,30 0 1,0 60,0 a30,30 0 1,0 -60,0 z" />
-        <path android:fillColor="#05070C"
-            android:pathData="M242,214 a14,14 0 1,0 28,0 a14,14 0 1,0 -28,0 z" />
-        <path android:fillColor="#CCFFFFFF"
-            android:pathData="M222,192 a14,9 0 1,0 28,0 a14,9 0 1,0 -28,0 z" />
-        <!-- red LED -->
-        <path android:fillColor="#E8262B"
-            android:pathData="M245,110 a11,11 0 1,0 22,0 a11,11 0 1,0 -22,0 z" />
+        <path android:pathData="M356,300 C430,320 440,400 388,430 S300,470 268,452"
+            android:strokeColor="#00F0FF" android:strokeWidth="4" android:strokeLineCap="round"
+            android:fillColor="#00000000" />
+
+        <!-- underglow -->
+        <path android:fillColor="#5500F0FF"
+            android:pathData="M140,412 a116,24 0 1,0 232,0 a116,24 0 1,0 -232,0 z" />
+        <!-- chrome foot -->
+        <path android:pathData="M152,398 a104,26 0 1,0 208,0 a104,26 0 1,0 -208,0 z">
+            <aapt:attr name="android:fillColor">
+                <gradient android:type="linear" android:startX="0" android:startY="372"
+                    android:endX="0" android:endY="424">
+                    <item android:offset="0" android:color="#FFF4F7FF" />
+                    <item android:offset="0.5" android:color="#FF3A3E58" />
+                    <item android:offset="0.62" android:color="#FFC9CEE6" />
+                    <item android:offset="1" android:color="#FF4B4F6B" />
+                </gradient>
+            </aapt:attr>
+        </path>
+        <path android:fillColor="#141628" android:strokeColor="#FF2BD6" android:strokeWidth="3"
+            android:pathData="M170,394 a86,17 0 1,0 172,0 a86,17 0 1,0 -172,0 z" />
+        <!-- chrome neck + cyan light pipe -->
+        <path android:fillColor="#9AA0BC"
+            android:pathData="M244,320 h24 a10,10 0 0 1 10,10 v56 a10,10 0 0 1 -10,10 h-24 a10,10 0 0 1 -10,-10 v-56 a10,10 0 0 1 10,-10 z" />
+        <path android:fillColor="#00F0FF"
+            android:pathData="M256,334 a4,4 0 0 1 4,4 v40 a4,4 0 0 1 -8,0 v-40 a4,4 0 0 1 4,-4 z" />
+
+        <!-- gunmetal orb -->
+        <path android:pathData="M122,212 a134,134 0 1,0 268,0 a134,134 0 1,0 -268,0 z">
+            <aapt:attr name="android:fillColor">
+                <gradient android:type="radial" android:centerX="210" android:centerY="150"
+                    android:gradientRadius="230">
+                    <item android:offset="0" android:color="#FF8E93B5" />
+                    <item android:offset="0.25" android:color="#FF4A4F6E" />
+                    <item android:offset="0.65" android:color="#FF1D2033" />
+                    <item android:offset="1" android:color="#FF07080F" />
+                </gradient>
+            </aapt:attr>
+        </path>
+        <!-- neon rim: cyan top-right, magenta bottom-left -->
+        <path android:strokeColor="#00F0FF" android:strokeWidth="5" android:fillColor="#00000000"
+            android:pathData="M256,80 A132,132 0 0 1 388,212" />
+        <path android:strokeColor="#FF2BD6" android:strokeWidth="5" android:fillColor="#00000000"
+            android:pathData="M124,212 A132,132 0 0 0 256,344" />
+        <!-- panel seam -->
+        <path android:strokeColor="#05060C" android:strokeWidth="3" android:fillColor="#00000000"
+            android:pathData="M124,212 A132,40 0 0 0 388,212" />
+
+        <!-- chrome bezel -->
+        <path android:pathData="M170,212 a86,86 0 1,0 172,0 a86,86 0 1,0 -172,0 z">
+            <aapt:attr name="android:fillColor">
+                <gradient android:type="linear" android:startX="0" android:startY="126"
+                    android:endX="0" android:endY="298">
+                    <item android:offset="0" android:color="#FFF4F7FF" />
+                    <item android:offset="0.35" android:color="#FF9AA0BC" />
+                    <item android:offset="0.5" android:color="#FF3A3E58" />
+                    <item android:offset="0.62" android:color="#FFC9CEE6" />
+                    <item android:offset="1" android:color="#FF4B4F6B" />
+                </gradient>
+            </aapt:attr>
+        </path>
+        <path android:fillColor="#181A2B"
+            android:pathData="M180,212 a76,76 0 1,0 152,0 a76,76 0 1,0 -152,0 z" />
+        <!-- neon cyan ring (glow + core) -->
+        <path android:strokeColor="#5500F0FF" android:strokeWidth="14" android:fillColor="#00000000"
+            android:pathData="M192,212 a64,64 0 1,0 128,0 a64,64 0 1,0 -128,0 z" />
+        <path android:strokeColor="#00F0FF" android:strokeWidth="5" android:fillColor="#00000000"
+            android:pathData="M192,212 a64,64 0 1,0 128,0 a64,64 0 1,0 -128,0 z" />
+        <!-- glass + iris -->
+        <path android:fillColor="#14082E"
+            android:pathData="M196,212 a60,60 0 1,0 120,0 a60,60 0 1,0 -120,0 z" />
+        <path android:fillColor="#00F0FF"
+            android:pathData="M224,212 a32,32 0 1,0 64,0 a32,32 0 1,0 -64,0 z" />
+        <path android:fillColor="#05121A"
+            android:pathData="M232,212 a24,24 0 1,0 48,0 a24,24 0 1,0 -48,0 z" />
+        <path android:fillColor="#000000"
+            android:pathData="M241,212 a15,15 0 1,0 30,0 a15,15 0 1,0 -30,0 z" />
+        <!-- reflections -->
+        <path android:strokeColor="#BFFFFFFF" android:strokeWidth="8" android:strokeLineCap="round"
+            android:fillColor="#00000000" android:pathData="M214,186 A50,50 0 0 1 252,158" />
+        <path android:fillColor="#FFFFFF"
+            android:pathData="M226,196 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0 z" />
+
+        <!-- magenta LED bar -->
+        <path android:fillColor="#0A0616"
+            android:pathData="M233,98 h46 a7,7 0 0 1 0,14 h-46 a7,7 0 0 1 0,-14 z" />
+        <path android:fillColor="#FF2BD6"
+            android:pathData="M234,101 h44 a4,4 0 0 1 0,8 h-44 a4,4 0 0 1 0,-8 z" />
+
+        <!-- shell specular -->
+        <path android:fillColor="#47FFFFFF"
+            android:pathData="M150,150 Q170,100 240,104 Q200,120 150,150 z" />
     </group>
 </vector>

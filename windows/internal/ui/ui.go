@@ -1,4 +1,4 @@
-// Package ui is the tray icon (old-fashioned webcam, assets/icon/macawlink.ico) and settings window.
+// Package ui is the tray icon (futuristic cyberpunk orb-cam, assets/icon/macawlink.ico) and settings window.
 //
 // Tray menu:
 //
