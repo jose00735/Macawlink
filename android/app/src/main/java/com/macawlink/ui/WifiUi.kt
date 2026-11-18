@@ -67,10 +67,32 @@ fun WifiCard(onConnect: () -> Unit, card: @Composable (String, @Composable () ->
         if (t != null) onConnect()
     }
 
-    card("Wi-Fi") {
+    val mode by SessionHub.linkMode.collectAsState()
+    card("Connection") {
+        Text("Link", color = Dim, fontSize = 13.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(SessionHub.LinkMode.AUTO to "Auto", SessionHub.LinkMode.USB to "USB only", SessionHub.LinkMode.WIFI to "Wi-Fi only").forEach { (m, label) ->
+                androidx.compose.material3.FilterChip(
+                    selected = mode == m,
+                    onClick = { store.linkMode = m; SessionHub.linkMode.value = m },
+                    label = { Text(label, fontFamily = Mono, fontSize = 12.sp) },
+                    colors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Cyan.copy(alpha = 0.18f), selectedLabelColor = Cyan, labelColor = Color.White),
+                )
+            }
+        }
+        Text(
+            when (mode) {
+                SessionHub.LinkMode.AUTO -> "Plug in the cable to switch to USB; unplug it and Macawlink continues over Wi-Fi."
+                SessionHub.LinkMode.USB -> "Only the cable is used."
+                SessionHub.LinkMode.WIFI -> "Only Wi-Fi is used, even with the cable plugged in (it just charges)."
+            }, color = Dim, fontSize = 12.sp,
+        )
+        if (mode == SessionHub.LinkMode.USB) return@card
+        Text("Wi-Fi PC", color = Dim, fontSize = 13.sp)
         if (target != null) {
-            Text("Connected to ${target!!.name} · ${target!!.host}", color = Cyan, fontFamily = Mono, fontSize = 13.sp)
-            TextButton(onClick = { choose(null) }) { Text("Stop using Wi-Fi", color = Magenta) }
+            Text("${target!!.name} · ${target!!.host}", color = Cyan, fontFamily = Mono, fontSize = 13.sp)
+            TextButton(onClick = { choose(null) }) { Text("Forget this Wi-Fi PC", color = Magenta) }
         } else {
             Text("Pick your PC (it must run Macawlink on the same network):", color = Dim, fontSize = 13.sp)
         }

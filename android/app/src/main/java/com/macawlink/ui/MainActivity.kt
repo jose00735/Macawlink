@@ -276,6 +276,20 @@ private fun VideoCard(s: StreamSettings, onSettings: (StreamSettings) -> Unit) {
         Slider(zoom, { zoom = it }, valueRange = 1f..5f, onValueChangeFinished = { set(v.copy(zoom = zoom.toDouble())) },
             colors = SliderDefaults.colors(thumbColor = Cyan, activeTrackColor = Cyan))
         Toggle("Torch", v.torch) { set(v.copy(torch = it)) }
+        Choice("Focus", listOf("auto" to "Auto", "manual" to "Manual"), v.focusMode) { set(v.copy(focusMode = it)) }
+        if (v.focusMode == "manual") {
+            var focus by remember(v.focus) { mutableFloatStateOf(v.focus.toFloat()) }
+            Text("Focus ${if (focus < 0.05f) "far" else if (focus > 0.95f) "closest" else "%.0f%%".format(focus * 100)}", color = Dim, fontSize = 13.sp)
+            Slider(focus, { focus = it }, valueRange = 0f..1f, onValueChangeFinished = { set(v.copy(focus = focus.toDouble())) },
+                colors = SliderDefaults.colors(thumbColor = Cyan, activeTrackColor = Cyan))
+        }
+        var ev by remember(v.exposure) { mutableFloatStateOf(v.exposure.toFloat()) }
+        Text("Exposure ${"%+.1f".format(ev)} EV", color = Dim, fontSize = 13.sp)
+        Slider(ev, { ev = Math.round(it * 3) / 3f }, valueRange = -2f..2f, onValueChangeFinished = { set(v.copy(exposure = ev.toDouble())) },
+            colors = SliderDefaults.colors(thumbColor = Cyan, activeTrackColor = Cyan))
+        Choice("White balance", StreamSettings.WHITE_BALANCES.map { it to it.replaceFirstChar { c -> c.uppercase() } }, v.whiteBalance) { set(v.copy(whiteBalance = it)) }
+        Toggle("Lock exposure", v.aeLock) { set(v.copy(aeLock = it)) }
+        Toggle("Lock white balance", v.awbLock) { set(v.copy(awbLock = it)) }
         Toggle("Stabilization", v.stabilization) { set(v.copy(stabilization = it)) }
         Toggle("Mirror (on PC)", v.mirror) { set(v.copy(mirror = it)) }
     }

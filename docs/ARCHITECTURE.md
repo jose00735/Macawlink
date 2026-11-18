@@ -49,7 +49,7 @@ and mic were plugged in:
 - **Windows 11 Media Foundation virtual camera** (`MFCreateVirtualCamera`). It is a user-mode COM DLL with no kernel driver and no driver signing, and it shows up in every app, including the Windows Camera app.
 - The DLL is registered in **HKLM** once (installer, admin). Frame Server runs as LOCAL SERVICE and cannot see HKCU.
 - `macawlink.exe` calls `mk_vcam_start` at launch (session lifetime, current user), so the camera exists while the tray app runs.
-- Formats offered (NV12): 1280×720@30 (default), 1920×1080@30, 640×480@30, 1280×720@60, 1920×1080@60.
+- Formats offered (NV12): 1280×720@30 (default), 1920×1080@30, 640×480@30, 1280×720@60, 1920×1080@60, 2560×1440@30.
 - **Frame hand-off:** the DLL (consumer) creates `Global\Macawlink.Video` with a DACL for the user, LOCAL SERVICE and app containers. If it can't create Global objects it falls back to `Local\`. Go (producer) opens it.
   - The 256-byte header holds the latest slot, the per-slot size and pts, the `connected` flag, and the format the app opened (`reqWidth/Height/Fps`).
   - Layout is pinned by `static_assert`s in `ring.h` and by `vcam_test.go`.
@@ -60,7 +60,7 @@ and mic were plugged in:
 ### 2.1b Windows 10: DirectShow camera (`windows/native/dshow_filter.cpp`)
 - Windows 10 has no virtual-camera API, so the same DLL also contains a **DirectShow video capture filter**. It is registered in the video input device category, which is how OBS Virtual Camera appears too.
 - Apps load it into their own process: Chrome/Edge (and WebView2 apps like the new Teams), Zoom, Discord and OBS. It reads the **session-local** ring `Local\Macawlink.Video`, which `macawlink.exe` creates at startup.
-- It is a single capture pin with `IAMStreamConfig` (9 formats: 720p/1080p/480p × YUY2/NV12/I420, 5–60 fps) and `IKsPropertySet` (pin category capture). Samples are pushed through the downstream allocator from a paced worker thread.
+- It is a single capture pin with `IAMStreamConfig` (12 formats: 720p/1080p/480p/1440p × YUY2/NV12/I420, 5–60 fps) and `IKsPropertySet` (pin category capture). Samples are pushed through the downstream allocator from a paced worker thread.
 - **Limit:** Microsoft Store apps on Windows 10 (the Camera app, error `NoCamerasAreAttached`) enumerate only kernel-streaming devices. Reaching them needs an AVStream kernel driver (Phase 3, same signing requirement as the microphone driver).
 - A 32-bit build (`macawlink_native32.dll`, registered with SysWOW64 `regsvr32`) covers 32-bit apps.
 - `DllRegisterServer` adds the DirectShow device **only when the MF virtual camera is unavailable**, so Windows 11 never lists the camera twice.
@@ -124,11 +124,12 @@ Changeable from the phone, the tray (presets, lens) or the settings page. All ch
 
 | Video | Values |
 |---|---|
-| Resolution | 640×480, 1280×720, 1920×1080 |
+| Resolution | 640×480, 1280×720, 1920×1080, 2560×1440 |
 | Frame rate | 15, 24, 30, 60 (device permitting) |
 | Bitrate | Auto (~0.1 bpp) or 1.5–40 Mbps; CBR/VBR |
 | Codec | H.264, HEVC |
 | Camera | back / front, zoom 1–5×, torch, stabilization, mirror (PC side) |
+| Manual | focus auto/manual (distance), exposure −2…+2 EV, white balance presets, AE lock, AWB lock |
 
 | Audio | Values |
 |---|---|
@@ -147,6 +148,12 @@ Presets: **Low** (480p30, 1.5 Mbps, 16 kHz), **Meeting** (720p30 auto, 48 kHz mo
   - **Firewall:** the installer adds an inbound rule for `macawlink.exe` on private and domain networks.
 - One phone session at a time, whichever transport connects first. The other side gets `BYE busy`.
 - Audio stays PCM on Wi-Fi: 0.77 Mbps for 48 kHz mono is small next to video (3–20 Mbps). Opus is planned for constrained networks.
+
+### Switching links
+The phone's link mode is **Auto**, **USB only** or **Wi-Fi only**. In Auto, USB wins:
+- The PC probes USB while on Wi-Fi. The phone hands its session over: it ends Wi-Fi and answers on USB, and a `usbPending` flag stops the Wi-Fi loop from racing back in.
+- Pulling the cable ends the USB session, and the Wi-Fi loop reconnects within about 1.5 s.
+- The virtual camera never disappears in between; it shows the waiting card for a moment.
 
 ### Adaptive quality (phone)
 - **Auto bitrate** runs every 0.5 s on the size of the send queue. Over 512 KB queued it drops the bitrate by 25%. After 4 s with a near-empty queue it raises it by 10%, up to the ~0.1 bpp ceiling. The ceiling is applied live with `PARAMETER_KEY_VIDEO_BITRATE`, with no encoder restart.

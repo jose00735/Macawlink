@@ -37,7 +37,7 @@ bool MkRingReader::Open() {
     ring_ = (BYTE*)MapViewOfFile(map_, FILE_MAP_ALL_ACCESS, 0, 0, MK_RING_BYTES);
     if (!ring_) { CloseHandle(map_); map_ = nullptr; return false; }
     auto* hd = reinterpret_cast<MkRingHeader*>(ring_);
-    if (!existed || hd->magic != MK_RING_MAGIC) {
+    if (!existed || hd->magic != MK_RING_MAGIC || hd->version != MK_RING_VERSION) {
         memset(hd, 0, sizeof(*hd));
         hd->version = MK_RING_VERSION;
         hd->magic = MK_RING_MAGIC;
@@ -70,7 +70,7 @@ void MkRingReader::Fill(BYTE* y, LONG pitch, BYTE* uv, UINT32 w, UINT32 h, uint6
         hd->reqWidth = w;
         hd->reqHeight = h;
         hd->consumerTick = GetTickCount64();
-        if (hd->connected && hd->seq != 0 && hd->magic == MK_RING_MAGIC) {
+        if (hd->connected && hd->seq != 0 && hd->magic == MK_RING_MAGIC && hd->version == MK_RING_VERSION) {
             MemoryBarrier();
             uint32_t idx = hd->latest % MK_RING_SLOTS;
             uint32_t sw = hd->slots[idx].width, sh = hd->slots[idx].height;

@@ -144,3 +144,59 @@ func TestWiFiPairingAndReconnect(t *testing.T) {
 		t.Fatal("forget failed")
 	}
 }
+
+// Plugging the cable in while streaming over Wi-Fi moves the session to USB by itself.
+func TestWiFiToUSBUpgrade(t *testing.T) {
+	dir := t.TempDir()
+	id, _ := pairing.LoadOrCreateIdentity(dir, "TEST-PC")
+	store := pairing.OpenStore(dir)
+	token, _ := store.Add("phone-1", "Fake Pixel")
+	wifiAddr, usbAddr := freeAddr(t), freeAddr(t) // nothing listens on usbAddr yet: cable unplugged
+	ring, _ := vcam.NewRingFromMemory(make([]byte, vcam.RingBytes), nil)
+	a := New(Options{
+		Addr:        usbAddr,
+		NewDecoder:  func(int) (native.Decoder, error) { return &fakeDecoder{}, nil },
+		OpenAudio:   func(int, int) (native.AudioOut, error) { return &fakeAudio{}, nil },
+		RingSources: []func() (*vcam.Ring, error){func() (*vcam.Ring, error) { return ring, nil }},
+		WiFiAddr:    wifiAddr, Identity: id, Pairs: store,
+	}, config.Default())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go a.Run(ctx)
+	waitFor(t, "listener", func() bool {
+		c, err := net.Dial("tcp", wifiAddr)
+		if err == nil {
+			c.Close()
+		}
+		return err == nil
+	})
+
+	opt := fakephone.Options{Model: "Pixel", Settings: config.Default(), PhoneID: "phone-1", Token: token}
+	wifiDone := make(chan struct{})
+	go fakephone.DialWiFi(wifiAddr, opt, nil, wifiDone, id.Fingerprint)
+	waitFor(t, "wifi streaming", func() bool { return a.Status().Transport == "Wi-Fi" })
+
+	// Cable goes in: the phone (Auto mode) leaves Wi-Fi and answers over USB.
+	ln, err := net.Listen("tcp", usbAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	usbDone := make(chan struct{})
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		close(wifiDone)                       // phone hangs up Wi-Fi first…
+		fakephone.Serve(c, opt, nil, usbDone) // …then says HELLO over USB
+	}()
+	deadline := time.Now().Add(12 * time.Second)
+	for a.Status().Transport != "TCP "+usbAddr || a.Status().Phase != PhaseStreaming {
+		if time.Now().After(deadline) {
+			t.Fatalf("still on %q (%s)", a.Status().Transport, a.Status().Phase)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	close(usbDone)
+}

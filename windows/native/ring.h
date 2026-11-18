@@ -7,10 +7,10 @@
 #define MK_RING_NAME       L"Global\\Macawlink.Video"  // created by Frame Server (has SeCreateGlobalPrivilege)
 #define MK_RING_NAME_LOCAL L"Local\\Macawlink.Video"   // fallback if the source runs inside the app's session
 #define MK_RING_MAGIC   0x43564B4Du  // "MKVC"
-#define MK_RING_VERSION 1u
+#define MK_RING_VERSION 2u  // 2: slots sized for 2560x1440
 #define MK_RING_SLOTS   3
-#define MK_MAX_W        1920
-#define MK_MAX_H        1080
+#define MK_MAX_W        2560
+#define MK_MAX_H        1440
 #define MK_SLOT_BYTES   (MK_MAX_W * MK_MAX_H * 3 / 2)  // NV12
 #define MK_HEADER_BYTES 256
 #define MK_RING_BYTES   (MK_HEADER_BYTES + MK_RING_SLOTS * MK_SLOT_BYTES)

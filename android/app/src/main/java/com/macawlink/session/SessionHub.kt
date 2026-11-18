@@ -10,6 +10,9 @@ import kotlinx.coroutines.flow.update
 object SessionHub {
     enum class Phase { STOPPED, WAITING_PC, CONNECTING, PAIRING, STREAMING }
 
+    /** AUTO: USB whenever the cable carries a PC session, Wi-Fi otherwise (switches by itself). */
+    enum class LinkMode { AUTO, USB, WIFI }
+
     data class LinkState(
         val phase: Phase = Phase.STOPPED,
         val transport: String = "",
@@ -36,6 +39,7 @@ object SessionHub {
     val wifiTarget = MutableStateFlow<WifiTarget?>(null)
     val pairing = MutableStateFlow<PairPrompt?>(null)
     val previewSurface = MutableStateFlow<Surface?>(null)
+    val linkMode = MutableStateFlow(LinkMode.AUTO)
 
     fun update(f: (LinkState) -> LinkState) = state.update(f)
 }

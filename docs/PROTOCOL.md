@@ -65,7 +65,15 @@ The phone always sends `HELLO` first and **waits for `HELLO_ACK`** before sendin
             "aec":true,"ns":true,"agc":true,"gain_db":0}
 }
 ```
-`bitrate_kbps: 0` = auto. `mirror` and `gain_db` are applied on the PC.
+`bitrate_kbps: 0` = auto. Phase 3 adds `focus_mode` (`auto`|`manual`), `focus` (0 = far … 1 = closest),
+`exposure` (EV, −2…+2), `ae_lock`, `awb_lock` and `white_balance` (`auto`|`daylight`|`cloudy`|`incandescent`|`fluorescent`).
+They change the repeating capture request live; older phones simply ignore them, and the PC fills defaults for them.
+
+### USB ⇄ Wi-Fi hand-over
+While a Wi-Fi session runs, the PC keeps probing USB (`adb forward` + dial) every few seconds.
+- A phone in **Auto** link mode that gets this USB connection ends its Wi-Fi session (`BYE "switching to USB"`) and then sends `HELLO` over USB. The PC waits up to 6 s for the Wi-Fi session to close and continues over USB.
+- In **Wi-Fi only** mode the phone answers the USB connection with `BYE "wifi-only mode"`, and the PC backs off for 30 s.
+- When the USB session ends (cable pulled), the phone's Wi-Fi loop reconnects to the last paired PC. `mirror` and `gain_db` are applied on the PC.
 
 ## Session
 

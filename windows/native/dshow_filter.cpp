@@ -28,11 +28,11 @@ const wchar_t kName[] = L"Macawlink Camera";
 const wchar_t kPinName[] = L"Capture";
 
 struct Res { LONG w, h; };
-const Res kRes[] = {{1280, 720}, {1920, 1080}, {640, 480}};
+const Res kRes[] = {{1280, 720}, {1920, 1080}, {640, 480}, {2560, 1440}};
 const GUID* const kSub[] = {&MK_MEDIASUBTYPE_YUY2, &MK_MEDIASUBTYPE_NV12, &MK_MEDIASUBTYPE_I420};
 const DWORD kFourcc[] = {MAKEFOURCC('Y', 'U', 'Y', '2'), MAKEFOURCC('N', 'V', '1', '2'), MAKEFOURCC('I', '4', '2', '0')};
 const WORD kBits[] = {16, 12, 12};
-const int kTypeCount = 9;  // 3 sizes x 3 pixel formats
+const int kTypeCount = (int)(sizeof(kRes) / sizeof(kRes[0])) * 3;  // sizes x {YUY2, NV12, I420}
 const REFERENCE_TIME kDefaultInterval = 333333;  // 30 fps
 const REFERENCE_TIME kMinInterval = 166666;      // 60 fps
 const REFERENCE_TIME kMaxInterval = 2000000;     // 5 fps

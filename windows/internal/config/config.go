@@ -21,6 +21,13 @@ type Video struct {
 	Stabilization bool    `json:"stabilization"`
 	Torch         bool    `json:"torch"`
 	Zoom          float64 `json:"zoom"` // 1.0 = none
+	// Manual camera controls (Phase 3)
+	FocusMode    string  `json:"focus_mode"`    // "auto" | "manual"
+	Focus        float64 `json:"focus"`         // manual: 0 = far … 1 = closest the lens can do
+	Exposure     float64 `json:"exposure"`      // EV compensation, -2 … +2
+	AELock       bool    `json:"ae_lock"`       // freeze exposure
+	AWBLock      bool    `json:"awb_lock"`      // freeze white balance
+	WhiteBalance string  `json:"white_balance"` // auto | daylight | cloudy | incandescent | fluorescent
 }
 
 type Audio struct {
@@ -40,9 +47,9 @@ type Settings struct {
 	Audio Audio `json:"audio"`
 }
 
-// Resolutions the phone may encode at. The virtual camera itself advertises
-// 640×480, 1280×720 and 1920×1080; the receiver scales to whichever the app opens.
-var Resolutions = [][2]int{{640, 480}, {1280, 720}, {1920, 1080}}
+// Resolutions the phone may encode at. The virtual camera advertises the same sizes;
+// the receiver scales to whichever the app opens.
+var Resolutions = [][2]int{{640, 480}, {1280, 720}, {1920, 1080}, {2560, 1440}}
 
 var (
 	FrameRates  = []int{15, 24, 30, 60}
@@ -52,24 +59,49 @@ var (
 func Default() Settings { return Presets["meeting"] }
 
 // PresetNames in display order.
+// WhiteBalances the phone understands.
+var WhiteBalances = []string{"auto", "daylight", "cloudy", "incandescent", "fluorescent"}
+
+// Normalize fills fields that older clients leave empty.
+func (s *Settings) Normalize() {
+	if s.Video.FocusMode == "" {
+		s.Video.FocusMode = "auto"
+	}
+	if s.Video.WhiteBalance == "" {
+		s.Video.WhiteBalance = "auto"
+	}
+	if s.Video.Zoom == 0 {
+		s.Video.Zoom = 1
+	}
+}
+
 var PresetNames = []string{"low", "meeting", "max"}
 
 var Presets = map[string]Settings{
 	"low": {
-		Video: Video{Width: 640, Height: 480, FPS: 30, Codec: "h264", BitrateKbps: 1500, RateControl: "cbr", Lens: "back", Stabilization: true, Zoom: 1},
+		Video: Video{Width: 640, Height: 480, FPS: 30, Codec: "h264", BitrateKbps: 1500, RateControl: "cbr", Lens: "back", Stabilization: true, Zoom: 1, FocusMode: "auto", WhiteBalance: "auto"},
 		Audio: Audio{Enabled: true, Codec: "pcm", SampleRate: 16000, Channels: 1, FrameMs: 20, AEC: true, NS: true, AGC: true},
 	},
 	"meeting": {
-		Video: Video{Width: 1280, Height: 720, FPS: 30, Codec: "h264", BitrateKbps: 0, RateControl: "cbr", Lens: "back", Stabilization: true, Zoom: 1},
+		Video: Video{Width: 1280, Height: 720, FPS: 30, Codec: "h264", BitrateKbps: 0, RateControl: "cbr", Lens: "back", Stabilization: true, Zoom: 1, FocusMode: "auto", WhiteBalance: "auto"},
 		Audio: Audio{Enabled: true, Codec: "pcm", SampleRate: 48000, Channels: 1, FrameMs: 10, AEC: true, NS: true, AGC: true},
 	},
 	"max": {
-		Video: Video{Width: 1920, Height: 1080, FPS: 60, Codec: "h264", BitrateKbps: 20000, RateControl: "vbr", Lens: "back", Stabilization: true, Zoom: 1},
+		Video: Video{Width: 1920, Height: 1080, FPS: 60, Codec: "h264", BitrateKbps: 20000, RateControl: "vbr", Lens: "back", Stabilization: true, Zoom: 1, FocusMode: "auto", WhiteBalance: "auto"},
 		Audio: Audio{Enabled: true, Codec: "pcm", SampleRate: 48000, Channels: 2, FrameMs: 10},
 	},
 }
 
 func contains(xs []int, v int) bool {
+	for _, x := range xs {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+func containsStr(xs []string, v string) bool {
 	for _, x := range xs {
 		if x == v {
 			return true
@@ -101,6 +133,14 @@ func (s Settings) Validate() error {
 		return fmt.Errorf("lens must be back or front")
 	case s.Video.Zoom < 1 || s.Video.Zoom > 10:
 		return fmt.Errorf("zoom must be between 1 and 10")
+	case s.Video.FocusMode != "auto" && s.Video.FocusMode != "manual":
+		return fmt.Errorf("focus mode must be auto or manual")
+	case s.Video.Focus < 0 || s.Video.Focus > 1:
+		return fmt.Errorf("focus must be between 0 and 1")
+	case s.Video.Exposure < -2 || s.Video.Exposure > 2:
+		return fmt.Errorf("exposure must be between -2 and +2 EV")
+	case !containsStr(WhiteBalances, s.Video.WhiteBalance):
+		return fmt.Errorf("unknown white balance %q", s.Video.WhiteBalance)
 	case !contains(SampleRates, s.Audio.SampleRate):
 		return fmt.Errorf("unsupported sample rate %d", s.Audio.SampleRate)
 	case s.Audio.Channels != 1 && s.Audio.Channels != 2:
@@ -147,6 +187,7 @@ func Load() (Settings, error) {
 	if err := json.Unmarshal(b, &s); err != nil {
 		return Default(), err
 	}
+	s.Normalize()
 	if err := s.Validate(); err != nil {
 		return Default(), err
 	}

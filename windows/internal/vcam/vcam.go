@@ -15,10 +15,10 @@ import (
 const (
 	RingName    = `Global\Macawlink.Video`
 	Magic       = 0x43564B4D // "MKVC"
-	Version     = 1
+	Version     = 2          // 2: slots sized for 2560x1440
 	Slots       = 3
-	MaxWidth    = 1920
-	MaxHeight   = 1080
+	MaxWidth    = 2560
+	MaxHeight   = 1440
 	SlotBytes   = MaxWidth * MaxHeight * 3 / 2
 	HeaderBytes = 256
 	RingBytes   = HeaderBytes + Slots*SlotBytes
@@ -39,7 +39,7 @@ const (
 	offTick      = 120
 )
 
-var ErrTooLarge = errors.New("vcam: frame larger than 1920x1080")
+var ErrTooLarge = errors.New("vcam: frame larger than 2560x1440")
 
 // Ring is a view over the shared memory. All methods are safe for one producer goroutine
 // plus concurrent readers of Requested/Delivered.
@@ -55,7 +55,7 @@ func NewRingFromMemory(mem []byte, free func()) (*Ring, error) {
 		return nil, errors.New("vcam: ring memory too small")
 	}
 	r := &Ring{mem: mem, free: free}
-	if r.u32(offMagic).Load() != Magic {
+	if r.u32(offMagic).Load() != Magic || r.u32(offVersion).Load() != Version {
 		// Fresh mapping (we created it first): initialise the header.
 		for i := 0; i < HeaderBytes; i++ {
 			mem[i] = 0

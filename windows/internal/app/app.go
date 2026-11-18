@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -25,7 +26,7 @@ import (
 	"github.com/jose00735/macawlink/windows/internal/video"
 )
 
-const Version = "0.2.0"
+const Version = "0.3.0"
 
 // Phases shown in the UI.
 const (
@@ -100,9 +101,10 @@ type App struct {
 	wmu sync.Mutex
 	seq uint32
 
-	active   atomic.Bool // one phone session at a time (USB or Wi-Fi)
-	pairing  *pairingState
-	pairFail map[string]time.Time // per-IP cool-down after a failed/declined pairing
+	active     atomic.Bool   // one phone session at a time (USB or Wi-Fi)
+	usbBackoff time.Duration // between Wi-Fi → USB upgrade attempts
+	pairing    *pairingState
+	pairFail   map[string]time.Time // per-IP cool-down after a failed/declined pairing
 
 	video *video.Pipeline
 	audio *audio.Pipeline
@@ -233,27 +235,70 @@ func (a *App) setPhase(phase, msg string) {
 }
 
 func (a *App) connLoop(ctx context.Context) {
+	var usbRetryAt time.Time
 	for ctx.Err() == nil {
-		if a.active.Load() { // a Wi-Fi session is running
+		if a.active.Load() {
+			// On Wi-Fi? Plugging in the cable upgrades the link to USB (lower latency, charging).
+			// The phone agrees only in its Auto link mode; otherwise it says bye and we back off.
+			if a.currentTransport() == "Wi-Fi" && time.Now().After(usbRetryAt) {
+				if a.upgradeToUSB(ctx) {
+					continue
+				}
+				usbRetryAt = time.Now().Add(a.usbBackoff)
+			}
 			sleep(ctx, time.Second)
 			continue
 		}
-		conn, hello, dev, err := a.connect(ctx)
+		conn, hello, dev, err := a.connect(ctx, false)
 		if err != nil {
 			sleep(ctx, 2*time.Second)
 			continue
-		}
-		transportName := "USB"
-		if a.opt.Addr != "" {
-			transportName = "TCP " + a.opt.Addr
 		}
 		if !a.active.CompareAndSwap(false, true) {
 			conn.Close()
 			continue
 		}
-		a.runSession(ctx, conn, hello, dev, transportName)
+		a.runSession(ctx, conn, hello, dev, a.usbName())
 		sleep(ctx, 1500*time.Millisecond)
 	}
+}
+
+func (a *App) usbName() string {
+	if a.opt.Addr != "" {
+		return "TCP " + a.opt.Addr
+	}
+	return "USB"
+}
+
+func (a *App) currentTransport() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.status.Transport
+}
+
+// upgradeToUSB dials the phone over USB while a Wi-Fi session runs. A phone in Auto mode
+// ends its Wi-Fi session and answers HELLO here; we then take over once Wi-Fi has wound down.
+func (a *App) upgradeToUSB(ctx context.Context) bool {
+	conn, hello, dev, err := a.connect(ctx, true)
+	if err != nil {
+		if strings.Contains(err.Error(), "bye") { // phone is in Wi-Fi-only mode (or an old version)
+			a.usbBackoff = 30 * time.Second
+		} else {
+			a.usbBackoff = 2 * time.Second
+		}
+		return false
+	}
+	deadline := time.Now().Add(6 * time.Second)
+	for a.active.Load() && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !a.active.CompareAndSwap(false, true) {
+		conn.Close()
+		return false
+	}
+	log.Printf("link: switched from Wi-Fi to %s", a.usbName())
+	a.runSession(ctx, conn, hello, dev, a.usbName())
+	return true
 }
 
 // runSession streams until the phone leaves, then resets everything. a.active must be set.
@@ -274,24 +319,30 @@ func (a *App) runSession(ctx context.Context, conn net.Conn, hello protocol.Pack
 	a.setPhase(PhaseWaitingApp, "Phone disconnected — waiting for it to reconnect…")
 }
 
-func (a *App) connect(ctx context.Context) (net.Conn, protocol.Packet, transport.Device, error) {
+// connect finds and dials the USB phone. quiet: don't touch the status or launch the app
+// (used for the Wi-Fi → USB upgrade probe while streaming).
+func (a *App) connect(ctx context.Context, quiet bool) (net.Conn, protocol.Packet, transport.Device, error) {
+	setPhase := a.setPhase
+	if quiet {
+		setPhase = func(string, string) {}
+	}
 	if a.opt.Addr != "" {
 		c, h, err := transport.Dial(ctx, a.opt.Addr)
 		if err != nil {
-			a.setPhase(PhaseWaitingApp, "Waiting for phone at "+a.opt.Addr)
+			setPhase(PhaseWaitingApp, "Waiting for phone at "+a.opt.Addr)
 			return nil, h, transport.Device{}, err
 		}
 		return c, h, transport.Device{Serial: a.opt.Addr}, nil
 	}
 	path, err := transport.FindADB(a.opt.ExeDir)
 	if err != nil {
-		a.setPhase(PhaseNoADB, "adb.exe not found — keep the bundled platform-tools next to macawlink.exe")
+		setPhase(PhaseNoADB, "adb.exe not found — keep the bundled platform-tools next to macawlink.exe")
 		return nil, protocol.Packet{}, transport.Device{}, err
 	}
 	adb := transport.ADB{Path: path}
 	devs, err := adb.Devices(ctx)
 	if err != nil {
-		a.setPhase(PhaseNoADB, "adb is not responding: "+err.Error())
+		setPhase(PhaseNoADB, "adb is not responding: "+err.Error())
 		return nil, protocol.Packet{}, transport.Device{}, err
 	}
 	var dev transport.Device
@@ -321,14 +372,14 @@ func (a *App) connect(ctx context.Context) (net.Conn, protocol.Packet, transport
 	a.mu.Unlock()
 	if dev.Serial == "" {
 		if unauthorized {
-			a.setPhase(PhaseUnauthorized, "Tap “Allow USB debugging” on your phone")
+			setPhase(PhaseUnauthorized, "Tap “Allow USB debugging” on your phone")
 		} else {
-			a.setPhase(PhaseNoDevice, a.idleHint())
+			setPhase(PhaseNoDevice, a.idleHint())
 		}
 		return nil, protocol.Packet{}, dev, errors.New("no device")
 	}
 	if err := adb.Forward(ctx, dev.Serial, protocol.DefaultPort); err != nil {
-		a.setPhase(PhaseNoDevice, "adb forward failed: "+err.Error())
+		setPhase(PhaseNoDevice, "adb forward failed: "+err.Error())
 		return nil, protocol.Packet{}, dev, err
 	}
 	c, h, err := transport.Dial(ctx, fmt.Sprintf("127.0.0.1:%d", protocol.DefaultPort))
@@ -337,13 +388,13 @@ func (a *App) connect(ctx context.Context) (net.Conn, protocol.Packet, transport
 		if name == "" {
 			name = dev.Serial
 		}
-		a.setPhase(PhaseWaitingApp, "Found "+name+" — open Macawlink on the phone and tap Start")
+		setPhase(PhaseWaitingApp, "Found "+name+" — open Macawlink on the phone and tap Start")
 		// Open the app on the phone once per plug-in (not repeatedly, so Stop on the phone sticks).
 		a.mu.Lock()
 		_, done := a.autoAt[dev.Serial]
 		a.autoAt[dev.Serial] = time.Now()
 		a.mu.Unlock()
-		if !done {
+		if !done && !quiet {
 			if err := adb.StartApp(ctx, dev.Serial); err == nil {
 				log.Printf("asked %s to open Macawlink", dev.Serial)
 			}
@@ -507,9 +558,7 @@ func (a *App) adopt(s config.Settings) {
 	a.mu.Lock()
 	s.Audio.GainDB = a.settings.Audio.GainDB
 	s.Video.Mirror = a.settings.Video.Mirror
-	if s.Video.Zoom == 0 {
-		s.Video.Zoom = 1
-	}
+	s.Normalize() // older phone apps don't send the Phase 3 fields
 	a.settings = s
 	a.mu.Unlock()
 	if a.opt.SaveConfig {

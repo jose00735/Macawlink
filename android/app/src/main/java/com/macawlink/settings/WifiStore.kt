@@ -38,6 +38,10 @@ class WifiStore(context: Context) {
         prefs.edit().putString("paired", ProtoJson.encodeToString(paired().filterNot { it.fp == fp })).apply()
     }
 
+    var linkMode: SessionHub.LinkMode
+        get() = runCatching { SessionHub.LinkMode.valueOf(prefs.getString("link_mode", "AUTO")!!) }.getOrDefault(SessionHub.LinkMode.AUTO)
+        set(v) { prefs.edit().putString("link_mode", v.name).apply() }
+
     fun lastTarget(): SessionHub.WifiTarget? = prefs.getString("target", null)?.let {
         runCatching { ProtoJson.decodeFromString<Target>(it) }.getOrNull()
     }?.let { SessionHub.WifiTarget(it.host, it.port, it.name, it.shortFp) }

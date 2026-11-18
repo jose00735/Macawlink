@@ -174,6 +174,17 @@
     <div class="row"><label for="mirror">Mirror</label><label class="switch"><input id="mirror" type="checkbox"><i></i></label></div>
     <div class="row"><label for="stab">Stabilization</label><label class="switch"><input id="stab" type="checkbox"><i></i></label></div>
     <div class="row"><label for="torch">Torch</label><label class="switch"><input id="torch" type="checkbox"><i></i></label></div>
+    <div class="row"><label for="fmode">Focus</label>
+      <select id="fmode"><option value="auto">Auto</option><option value="manual">Manual</option></select></div>
+    <div class="row" id="focusrow"><label for="focus">Focus distance <span id="focusv" class="badge">far</span></label>
+      <input id="focus" type="range" min="0" max="1" step="0.01"></div>
+    <div class="row"><label for="ev">Exposure <span id="evv" class="badge">0 EV</span></label>
+      <input id="ev" type="range" min="-2" max="2" step="0.333"></div>
+    <div class="row"><label for="wb">White balance</label>
+      <select id="wb"><option value="auto">Auto</option><option value="daylight">Daylight</option><option value="cloudy">Cloudy</option>
+        <option value="incandescent">Incandescent</option><option value="fluorescent">Fluorescent</option></select></div>
+    <div class="row"><label for="aelock">Lock exposure</label><label class="switch"><input id="aelock" type="checkbox"><i></i></label></div>
+    <div class="row"><label for="awblock">Lock white balance</label><label class="switch"><input id="awblock" type="checkbox"><i></i></label></div>
   </section>
 
   <section>
@@ -241,9 +252,21 @@ function fill() {
   $("rc").value = v.rate_control; $("lens").value = v.lens; $("zoom").value = v.zoom || 1;
   $("zoomv").textContent = (+(v.zoom || 1)).toFixed(1) + "×";
   $("mirror").checked = v.mirror; $("stab").checked = v.stabilization; $("torch").checked = v.torch;
+  $("fmode").value = v.focus_mode || "auto"; $("focus").value = v.focus || 0; $("ev").value = v.exposure || 0;
+  $("wb").value = v.white_balance || "auto"; $("aelock").checked = !!v.ae_lock; $("awblock").checked = !!v.awb_lock;
+  showManual();
   $("aen").checked = a.enabled; $("rate").value = a.sample_rate; $("ch").value = a.channels; $("fm").value = a.frame_ms;
   $("aec").checked = a.aec; $("ns").checked = a.ns; $("agc").checked = a.agc; $("gain").value = a.gain_db; $("gainv").textContent = a.gain_db + " dB";
 }
+
+function showManual() {
+  $("focusrow").style.display = $("fmode").value === "manual" ? "" : "none";
+  const f = +$("focus").value;
+  $("focusv").textContent = f < 0.05 ? "far" : f > 0.95 ? "closest" : Math.round(f * 100) + "%";
+  const e = Math.round(+$("ev").value * 3) / 3;
+  $("evv").textContent = (e > 0 ? "+" : "") + e.toFixed(1) + " EV";
+}
+["fmode", "focus", "ev"].forEach(id => $(id).addEventListener("input", showManual));
 
 async function apply() {
   editingUntil = Date.now() + 1500;
@@ -251,7 +274,9 @@ async function apply() {
   const s = structuredClone(settings);
   Object.assign(s.video, { width: w, height: h, fps: +$("fps").value, codec: $("codec").value, bitrate_kbps: +$("bitrate").value,
     rate_control: $("rc").value, lens: $("lens").value, zoom: +$("zoom").value, mirror: $("mirror").checked,
-    stabilization: $("stab").checked, torch: $("torch").checked });
+    stabilization: $("stab").checked, torch: $("torch").checked,
+    focus_mode: $("fmode").value, focus: +$("focus").value, exposure: Math.round(+$("ev").value * 3) / 3,
+    white_balance: $("wb").value, ae_lock: $("aelock").checked, awb_lock: $("awblock").checked });
   Object.assign(s.audio, { enabled: $("aen").checked, sample_rate: +$("rate").value, channels: +$("ch").value, frame_ms: +$("fm").value,
     aec: $("aec").checked, ns: $("ns").checked, agc: $("agc").checked, gain_db: +$("gain").value });
   const r = await fetch("/api/settings", {method: "POST", headers: H, body: JSON.stringify(s)});
@@ -285,6 +310,7 @@ function show(st) {
   $("msg").textContent = st.message;
   $("device").textContent = st.device || "—";
   $("link").textContent = st.transport ? `${st.transport}${st.serial ? " · " + st.serial : ""}` : "—";
+  $("link").title = "With the phone's Link set to Auto, plugging the cable in switches to USB and unplugging it goes back to Wi-Fi.";
   $("rtt").textContent = st.rtt_ms ? st.rtt_ms.toFixed(1) + " ms" : "—";
   $("battery").textContent = st.phone.battery ? `${st.phone.battery}%${st.phone.charging ? " ⚡" : ""}` : "—";
   $("temp").textContent = st.phone.temp_c ? st.phone.temp_c.toFixed(1) + " °C" : "—";

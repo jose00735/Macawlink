@@ -8,7 +8,7 @@ namespace {
 struct Format { UINT32 w, h, fps; };
 // First entry is the default; apps that do not negotiate get 720p30.
 const Format kFormats[] = {
-    {1280, 720, 30}, {1920, 1080, 30}, {640, 480, 30}, {1280, 720, 60}, {1920, 1080, 60},
+    {1280, 720, 30}, {1920, 1080, 30}, {640, 480, 30}, {1280, 720, 60}, {1920, 1080, 60}, {2560, 1440, 30},
 };
 const int kFormatCount = sizeof(kFormats) / sizeof(kFormats[0]);
 

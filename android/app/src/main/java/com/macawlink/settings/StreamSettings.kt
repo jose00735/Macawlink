@@ -24,6 +24,13 @@ data class StreamSettings(
         val stabilization: Boolean = true,
         val torch: Boolean = false,
         val zoom: Double = 1.0,
+        // Manual camera controls (Phase 3)
+        @SerialName("focus_mode") val focusMode: String = "auto", // auto | manual
+        val focus: Double = 0.0,                                 // manual: 0 = far … 1 = closest
+        val exposure: Double = 0.0,                              // EV compensation -2 … +2
+        @SerialName("ae_lock") val aeLock: Boolean = false,
+        @SerialName("awb_lock") val awbLock: Boolean = false,
+        @SerialName("white_balance") val whiteBalance: String = "auto",
     )
 
     @Serializable
@@ -40,7 +47,8 @@ data class StreamSettings(
     )
 
     companion object {
-        val RESOLUTIONS = listOf(640 to 480, 1280 to 720, 1920 to 1080)
+        val RESOLUTIONS = listOf(640 to 480, 1280 to 720, 1920 to 1080, 2560 to 1440)
+        val WHITE_BALANCES = listOf("auto", "daylight", "cloudy", "incandescent", "fluorescent")
         val FRAME_RATES = listOf(15, 24, 30, 60)
         val SAMPLE_RATES = listOf(16_000, 24_000, 32_000, 44_100, 48_000)
         val BITRATES = listOf(0, 1500, 3000, 6000, 10000, 15000, 20000)

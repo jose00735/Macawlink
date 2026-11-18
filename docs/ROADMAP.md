@@ -19,8 +19,19 @@
 - [x] Phone preview while streaming
 - [ ] Opus audio for constrained networks (PCM is 0.77 Mbps, fine on normal Wi-Fi)
 
-## Phase 3: Drivers and extras (needs an EV code-signing certificate)
-- [ ] SYSVAD-based “Macawlink Microphone” driver (EV cert + attestation signing)
-- [ ] AVStream camera driver for Windows 10 Store apps (Camera app); same signing path
-- [ ] 1440p/4K, manual focus/exposure from the PC
+## Phase 3: Easy switching and pro controls ✅ (v0.3.0, awaiting hardware validation)
+- [x] Link mode on the phone: **Auto** (cable → USB, unplug → Wi-Fi, automatic hand-over), USB only, Wi-Fi only
+- [x] PC upgrades a running Wi-Fi session to USB when the cable is plugged in
+- [x] Manual focus, exposure compensation, white balance presets, AE/AWB lock (phone + PC, live)
+- [x] 1440p (2560×1440) end to end: phone encoder, frame ring, Windows 11 and Windows 10 cameras
+- [ ] Several phones as several cameras (moved to Phase 5)
+
+## Phase 4: Drivers (blocked: needs an EV code-signing certificate + Microsoft attestation signing)
+Windows refuses to load unsigned kernel drivers, so these can't ship until a certificate is bought (~US$300/yr).
+- [ ] SYSVAD-based “Macawlink Microphone” driver (replaces VB-Audio Virtual Cable)
+- [ ] AVStream camera driver so Windows 10 Store apps (Camera, WhatsApp desktop) see Macawlink
+
+## Phase 5: Extras
 - [ ] Several phones as several cameras
+- [ ] 4K
+- [ ] Opus audio for constrained networks

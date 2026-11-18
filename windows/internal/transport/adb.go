@@ -129,11 +129,15 @@ func Dial(ctx context.Context, addr string) (net.Conn, protocol.Packet, error) {
 		tc.SetKeepAlivePeriod(5 * time.Second)
 		tc.SetReadBuffer(1 << 20)
 	}
-	c.SetReadDeadline(time.Now().Add(3 * time.Second))
+	c.SetReadDeadline(time.Now().Add(6 * time.Second)) // a phone switching from Wi-Fi needs a moment
 	p, err := protocol.Read(c)
 	if err != nil {
 		c.Close()
 		return nil, protocol.Packet{}, fmt.Errorf("no HELLO from phone (is Macawlink streaming?): %w", err)
+	}
+	if p.Type == protocol.Bye {
+		c.Close()
+		return nil, protocol.Packet{}, fmt.Errorf("phone said bye: %s", p.Payload)
 	}
 	if p.Type != protocol.Hello {
 		c.Close()

@@ -8,8 +8,8 @@ real USB webcam. The phone's microphone feeds a virtual mic.
 
 - **Android app:** Kotlin, Camera2 feeding the hardware H.264/HEVC encoder (zero copy), PCM mic, foreground service
 - **Windows receiver:** Go (standard library only) plus one native DLL that holds the Windows 11 virtual camera, the Media Foundation decoder and WASAPI output
-- **USB or Wi-Fi:** TLS 1.3 with Bluetooth-style code pairing, mDNS discovery, adaptive bitrate, A/V sync
-- **Tweakable live** from the phone or the PC: resolution (480p, 720p, 1080p), 15–60 fps, bitrate (or auto), H.264/HEVC, lens, zoom, torch, stabilization, mirror, sample rate (16–48 kHz), mono/stereo, echo/noise/gain processing, PC-side gain, plus presets
+- **USB or Wi-Fi, switching automatically** when you plug or unplug the cable; Wi-Fi uses TLS 1.3 with Bluetooth-style code pairing, mDNS discovery, adaptive bitrate, A/V sync
+- **Tweakable live** from the phone or the PC: resolution (480p–1440p), 15–60 fps, bitrate (or auto), H.264/HEVC, lens, zoom, torch, stabilization, mirror, manual focus, exposure compensation, white balance, AE/AWB lock, sample rate (16–48 kHz), mono/stereo, echo/noise/gain processing, PC-side gain, plus presets
 
 ## Setup (one time)
 
@@ -25,6 +25,11 @@ real USB webcam. The phone's microphone feeds a virtual mic.
 4. Plug the phone in and tap **Allow** on the USB-debugging prompt. Macawlink opens on the phone by itself.
    Tap **Start streaming** the first time to grant camera and mic permission.
 5. In Teams/Zoom/Meet/OBS pick **Macawlink Camera** and **CABLE Output**.
+
+### USB ⇄ Wi-Fi switching
+In the phone app, under **Connection → Link**:
+- **Auto** (default): plug in the cable and the stream moves to USB, which has lower latency and charges the phone. Unplug it and the stream continues over Wi-Fi a moment later. The camera stays on in your call app the whole time; it only blinks for a second.
+- **USB only** / **Wi-Fi only**: stick to one link. With *Wi-Fi only* the cable just charges.
 
 ### Wi-Fi (no cable)
 On the phone open **Wi-Fi**, tap your PC in the list (or type its address), and tap **Start streaming**.

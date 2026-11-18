@@ -9,6 +9,8 @@ class MacawlinkApp : Application() {
     override fun onCreate() {
         super.onCreate()
         SessionHub.settings.value = SettingsStore(this).load()
-        SessionHub.wifiTarget.value = WifiStore(this).lastTarget()
+        val ws = WifiStore(this)
+        SessionHub.wifiTarget.value = ws.lastTarget()
+        SessionHub.linkMode.value = ws.linkMode
     }
 }

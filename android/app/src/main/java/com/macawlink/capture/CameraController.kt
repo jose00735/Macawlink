@@ -80,7 +80,7 @@ class CameraController(
             }
             val map = ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)!!
             val sizes = map.getOutputSizes(MediaCodec::class.java).orEmpty()
-                .filter { it.width <= 1920 && it.height <= 1080 }.map { listOf(it.width, it.height) }
+                .filter { it.width <= 2560 && it.height <= 1440 }.map { listOf(it.width, it.height) }
             val fps = ch.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES).orEmpty().map { it.upper }.distinct().sorted()
             CameraInfo(id, facing, sizes, fps)
         }.getOrNull()
@@ -222,8 +222,34 @@ class CameraController(
                 set(CaptureRequest.FLASH_MODE, if (s.torch) CaptureRequest.FLASH_MODE_TORCH else CaptureRequest.FLASH_MODE_OFF)
             }
             applyZoom(this, ch, s.zoom)
+            applyManual(this, ch, s)
         }.build()
         runCatching { sess.setRepeatingRequest(req, null, handler) }.onFailure { Log.w(TAG, "repeat", it) }
+    }
+
+    /** Focus, exposure compensation, white balance and the AE/AWB locks (all live). */
+    private fun applyManual(b: CaptureRequest.Builder, ch: CameraCharacteristics, s: StreamSettings.Video) {
+        val minFocus = ch.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE) ?: 0f // 0 = fixed focus
+        if (s.focusMode == "manual" && minFocus > 0f) {
+            b.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
+            b.set(CaptureRequest.LENS_FOCUS_DISTANCE, (s.focus.toFloat().coerceIn(0f, 1f)) * minFocus) // diopters
+        }
+        val range = ch.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE)
+        val step = ch.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP)
+        if (range != null && step != null && step.toDouble() > 0) {
+            val idx = Math.round(s.exposure / step.toDouble()).toInt().coerceIn(range.lower, range.upper)
+            b.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, idx)
+        }
+        if (ch.get(CameraCharacteristics.CONTROL_AE_LOCK_AVAILABLE) == true) b.set(CaptureRequest.CONTROL_AE_LOCK, s.aeLock)
+        val wb = when (s.whiteBalance) {
+            "daylight" -> CaptureRequest.CONTROL_AWB_MODE_DAYLIGHT
+            "cloudy" -> CaptureRequest.CONTROL_AWB_MODE_CLOUDY_DAYLIGHT
+            "incandescent" -> CaptureRequest.CONTROL_AWB_MODE_INCANDESCENT
+            "fluorescent" -> CaptureRequest.CONTROL_AWB_MODE_FLUORESCENT
+            else -> CaptureRequest.CONTROL_AWB_MODE_AUTO
+        }
+        if (ch.get(CameraCharacteristics.CONTROL_AWB_AVAILABLE_MODES)?.contains(wb) == true) b.set(CaptureRequest.CONTROL_AWB_MODE, wb)
+        if (ch.get(CameraCharacteristics.CONTROL_AWB_LOCK_AVAILABLE) == true) b.set(CaptureRequest.CONTROL_AWB_LOCK, s.awbLock)
     }
 
     private fun applyZoom(b: CaptureRequest.Builder, ch: CameraCharacteristics, zoom: Double) {
@@ -275,8 +301,8 @@ class CameraController(
         fun pickSize(sizes: List<Pair<Int, Int>>, w: Int, h: Int): Pair<Int, Int> {
             sizes.firstOrNull { it.first == w && it.second == h }?.let { return it }
             val aspect = w.toDouble() / h
-            val sameAspect = sizes.filter { abs(it.first.toDouble() / it.second - aspect) < 0.02 && it.first <= 1920 }
-            val pool = sameAspect.ifEmpty { sizes.filter { it.first <= 1920 } }.ifEmpty { sizes }
+            val sameAspect = sizes.filter { abs(it.first.toDouble() / it.second - aspect) < 0.02 && it.first <= 2560 }
+            val pool = sameAspect.ifEmpty { sizes.filter { it.first <= 2560 } }.ifEmpty { sizes }
             return pool.minByOrNull { abs(it.first * it.second - w * h) } ?: (w to h)
         }
 

@@ -79,6 +79,8 @@ class StreamService : Service() {
     @Volatile private var conn: Connection? = null
     private val sessionLock = Any()
     @Volatile private var busy = false
+    @Volatile private var usbPending = false     // a USB session is taking over from Wi-Fi
+    @Volatile private var transport = ""          // of the running session
     private var camera: CameraController? = null
     private var audio: AudioCapture? = null
     private var wakeLock: PowerManager.WakeLock? = null
@@ -141,8 +143,36 @@ class StreamService : Service() {
         }
         while (running) {
             val c = try { link.accept() } catch (e: Exception) { if (running) Log.w(TAG, "accept", e); break }
-            thread(name = "mk-usb-session") { guarded(c) { runSession(c, "USB", null) } }
+            thread(name = "mk-usb-session") { onUsbConnection(c) }
         }
+    }
+
+    /**
+     * A PC reached us over USB. In Auto mode a running Wi-Fi session hands over to the cable
+     * (lower latency, and the phone charges); in Wi-Fi-only mode the PC is told to back off.
+     */
+    private fun onUsbConnection(c: Connection) {
+        when (SessionHub.linkMode.value) {
+            SessionHub.LinkMode.WIFI -> {
+                c.send(MsgType.BYE, ProtoJson.encodeToString(ByeMsg.serializer(), ByeMsg("wifi-only mode")).toByteArray())
+                Thread.sleep(50)
+                c.close()
+                return
+            }
+            SessionHub.LinkMode.AUTO -> if (busy && transport == "Wi-Fi") {
+                usbPending = true
+                try {
+                    Log.i(TAG, "cable plugged in: switching from Wi-Fi to USB")
+                    conn?.let { it.send(MsgType.BYE, ProtoJson.encodeToString(ByeMsg.serializer(), ByeMsg("switching to USB")).toByteArray()); Thread.sleep(50); it.close() }
+                    val until = System.currentTimeMillis() + 4000
+                    while (busy && System.currentTimeMillis() < until) Thread.sleep(25)
+                    guarded(c) { runSession(c, "USB", null) }
+                } finally { usbPending = false }
+                return
+            }
+            SessionHub.LinkMode.USB -> Unit
+        }
+        guarded(c) { runSession(c, "USB", null) }
     }
 
     /** Keeps a session to the chosen Wi-Fi PC alive (reconnects with backoff). */
@@ -150,7 +180,9 @@ class StreamService : Service() {
         var backoff = 1000L
         while (running) {
             val target = SessionHub.wifiTarget.value
-            if (target == null || busy) { Thread.sleep(500); continue }
+            if (target == null || busy || usbPending || SessionHub.linkMode.value == SessionHub.LinkMode.USB) {
+                Thread.sleep(500); continue
+            }
             val paired = wifiStore.pairedFor(target.shortFp)
             SessionHub.update { it.copy(phase = Phase.CONNECTING, error = null) }
             val dialed = try {
@@ -187,6 +219,7 @@ class StreamService : Service() {
 
     private fun runSession(c: Connection, transport: String, wifi: WifiCtx?) {
         conn = c
+        this.transport = transport
         dropUntilKey = false
         Log.i(TAG, "PC connected over $transport")
 
@@ -246,6 +279,7 @@ class StreamService : Service() {
             camera = null
             c.close()
             conn = null
+            this.transport = ""
             SessionHub.update {
                 it.copy(phase = if (running) Phase.WAITING_PC else Phase.STOPPED, pcName = null, transport = "", fps = 0.0, kbps = 0, targetKbps = 0)
             }
@@ -473,7 +507,7 @@ class StreamService : Service() {
         private const val CHANNEL = "stream"
         private const val NOTIF_ID = 1
         const val ACTION_STOP = "com.macawlink.STOP"
-        const val APP_VERSION = "0.2.0"
+        const val APP_VERSION = "0.3.0"
 
         fun start(ctx: Context) = ContextCompat.startForegroundService(ctx, Intent(ctx, StreamService::class.java))
         fun stop(ctx: Context) = ctx.startService(Intent(ctx, StreamService::class.java).setAction(ACTION_STOP))
