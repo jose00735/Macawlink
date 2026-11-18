@@ -13,8 +13,11 @@ real USB webcam. The phone's microphone feeds a virtual mic.
 
 ## Setup (one time)
 
-1. **PC: Windows 10 or 11.** Unzip `macawlink-windows.zip` anywhere and run `macawlink.exe`.
-   Accept the setup prompt. It installs to *Program Files* and registers *Macawlink Camera* (admin, once).
+1. **PC: Windows 10 or 11.** Run **`MacawlinkSetup-<version>.exe`** and accept the administrator prompt.
+   It installs to *Program Files*, adds *Macawlink Camera*, a Start menu shortcut and a firewall rule for Wi-Fi.
+   It also offers VB-Audio Virtual Cable if you don't have it yet. Updates use the same file; uninstall from **Settings → Apps → Macawlink**.
+   Unsigned builds show *“Windows protected your PC”* the first time: click **More info → Run anyway**.
+   For unattended installs: `MacawlinkSetup.exe /S`.
    - **Windows 11** uses the built-in virtual camera, so it works in every app, including the Camera app.
    - **Windows 10** uses a DirectShow camera (the same approach as OBS Virtual Camera). It shows up in desktop apps: Chrome, Edge, Firefox, Zoom, Teams, Discord, OBS, Skype. Restart the browser once after setup.
      Microsoft Store apps such as the built-in **Camera** app (error `0xA00F4244 NoCamerasAreAttached`) only accept cameras that have a kernel driver. That needs a signed driver, and it is on the roadmap. On Windows 11 they work today.
@@ -44,7 +47,7 @@ click) opens the settings page at `http://127.0.0.1:47801`.
 
 ```bash
 # Windows receiver: cross-compiles from Linux/macOS too (needs Go 1.22+ and `pip install ziglang`)
-cd windows && ./build.sh          # -> windows/dist/ (exe, native DLL, adb)
+cd windows && ./build.sh          # -> windows/dist/ (exe, DLLs, adb) + windows/MacawlinkSetup-<version>.exe
 
 # Android app (JDK 17+, Android SDK)
 cd android && ./gradlew assembleRelease   # -> app/build/outputs/apk/release/app-release.apk

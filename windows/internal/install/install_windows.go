@@ -175,6 +175,43 @@ func Install(srcDir string) error {
 	return nil
 }
 
+// UninstallKey is the "Apps & features" entry.
+const UninstallKey = `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Macawlink`
+
+// RegisterUninstall adds Macawlink to Settings → Apps with a working Uninstall button.
+func RegisterUninstall(version string) {
+	dir := Dir()
+	exe := filepath.Join(dir, "macawlink.exe")
+	var sizeKB int64
+	filepath.Walk(dir, func(_ string, fi os.FileInfo, err error) error {
+		if err == nil && !fi.IsDir() {
+			sizeKB += fi.Size() / 1024
+		}
+		return nil
+	})
+	vals := [][3]string{
+		{"DisplayName", "REG_SZ", "Macawlink"},
+		{"DisplayVersion", "REG_SZ", version},
+		{"Publisher", "REG_SZ", "Jose Acosta Hernandez"},
+		{"DisplayIcon", "REG_SZ", filepath.Join(dir, "macawlink.ico")},
+		{"InstallLocation", "REG_SZ", dir},
+		{"UninstallString", "REG_SZ", `"` + exe + `" --uninstall`},
+		{"QuietUninstallString", "REG_SZ", `"` + exe + `" --uninstall --quiet`},
+		{"URLInfoAbout", "REG_SZ", "https://github.com/jose00735/Macawlink"},
+		{"NoModify", "REG_DWORD", "1"},
+		{"NoRepair", "REG_DWORD", "1"},
+		{"EstimatedSize", "REG_DWORD", fmt.Sprint(sizeKB)},
+	}
+	for _, v := range vals {
+		run("reg", "add", UninstallKey, "/v", v[0], "/t", v[1], "/d", v[2], "/f")
+	}
+}
+
+// StopRunning closes other Macawlink processes (tray app) so files can be replaced.
+func StopRunning() {
+	run("taskkill", "/F", "/IM", "macawlink.exe", "/FI", fmt.Sprintf("PID ne %d", os.Getpid()))
+}
+
 // firewall lets phones on private (home/office) networks reach the Wi-Fi port and mDNS.
 func firewall(exe string) {
 	run("netsh", "advfirewall", "firewall", "delete", "rule", "name=Macawlink")
@@ -195,6 +232,7 @@ func Uninstall(exeDir string) error {
 	}
 	os.Remove(shortcutPath())
 	run("netsh", "advfirewall", "firewall", "delete", "rule", "name=Macawlink")
+	run("reg", "delete", UninstallKey, "/f")
 	if strings.EqualFold(filepath.Clean(exeDir), filepath.Clean(Dir())) {
 		cmd := exec.Command("cmd", "/c", "ping -n 3 127.0.0.1 >nul & rmdir /s /q \""+Dir()+"\"")
 		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}

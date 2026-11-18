@@ -36,4 +36,11 @@ Macawlink — use your Android phone as a webcam and microphone.
 adb.exe, AdbWinApi.dll and AdbWinUsbApi.dll are from the Android SDK Platform-Tools
 (Android Open Source Project, Apache License 2.0); see NOTICE-adb.txt.
 EOF
-ls -la "$DIST"
+echo "==> MacawlinkSetup.exe"
+VERSION=$(sed -n 's/^const Version = "\(.*\)"/\1/p' internal/app/app.go)
+rm -f cmd/setup/payload.zip
+(cd "$DIST" && zip -q -9 "$OLDPWD/cmd/setup/payload.zip" macawlink.exe macawlink_native.dll macawlink_native32.dll \
+  adb.exe AdbWinApi.dll AdbWinUsbApi.dll macawlink.ico NOTICE.txt NOTICE-adb.txt)
+GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w -H windowsgui" -o "$DIST/../MacawlinkSetup-$VERSION.exe" ./cmd/setup
+rm -f cmd/setup/payload.zip
+ls -la "$DIST" "$DIST/../MacawlinkSetup-$VERSION.exe"

@@ -21,3 +21,5 @@ windows/vcam-native/.vs/
 android/.kotlin/
 android/app/release/
 proto-golden/*.tmp
+windows/cmd/setup/payload.zip
+windows/MacawlinkSetup-*.exe

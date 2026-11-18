@@ -43,6 +43,7 @@ func init() { runtime.LockOSThread() } // the tray message loop must stay on the
 func main() {
 	doInstall := flag.Bool("install", false, "one-time setup (admin): install to Program Files and register the camera")
 	doUninstall := flag.Bool("uninstall", false, "remove the camera registration and installed files (admin)")
+	quiet := flag.Bool("quiet", false, "with --uninstall: no questions or messages")
 	addr := flag.String("addr", "", "connect to host:port directly instead of over USB/adb (e.g. a fake phone)")
 	serial := flag.String("serial", "", "adb serial of the phone to use when several are plugged in")
 	webAddr := flag.String("web", web.DefaultAddr, "address of the local settings page")
@@ -64,11 +65,31 @@ func main() {
 		log.Printf("installed to %s", install.Dir())
 		os.Exit(0)
 	case *doUninstall:
+		if !install.IsAdmin() { // Settings → Apps starts us without elevation
+			args := "--uninstall"
+			if *quiet {
+				args += " --quiet"
+			}
+			if err := install.Elevate(args); err != nil && !*quiet {
+				install.MessageBox("Macawlink", "Uninstall needs administrator rights:\n\n"+err.Error(), install.MBIconError)
+			}
+			os.Exit(0)
+		}
+		if !*quiet && install.MessageBox("Uninstall Macawlink",
+			"Remove Macawlink and “Macawlink Camera” from this PC?\n\nYour settings and paired phones are kept in case you reinstall.",
+			install.MBYesNo|install.MBIconWarning) != install.IDYes {
+			os.Exit(0)
+		}
+		install.StopRunning()
 		if err := install.Uninstall(exeDir); err != nil {
-			install.MessageBox("Macawlink", "Uninstall failed:\n\n"+err.Error(), install.MBIconError)
+			if !*quiet {
+				install.MessageBox("Macawlink", "Uninstall failed:\n\n"+err.Error(), install.MBIconError)
+			}
 			os.Exit(1)
 		}
-		install.MessageBox("Macawlink", "Macawlink Camera was removed.", install.MBIconInfo)
+		if !*quiet {
+			install.MessageBox("Macawlink", "Macawlink was removed.", install.MBIconInfo)
+		}
 		os.Exit(0)
 	}
 
