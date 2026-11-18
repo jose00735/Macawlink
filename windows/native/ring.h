@@ -4,8 +4,10 @@
 #pragma once
 #include <stdint.h>
 
-#define MK_RING_NAME       L"Global\\Macawlink.Video"  // created by Frame Server (has SeCreateGlobalPrivilege)
-#define MK_RING_NAME_LOCAL L"Local\\Macawlink.Video"   // fallback if the source runs inside the app's session
+// The names carry the layout version: a DLL from an older build still loaded in some app
+// (the installer can only rename an in-use DLL) must never read a ring laid out differently.
+#define MK_RING_NAME       L"Global\\Macawlink.Video.v2"  // created by Frame Server (has SeCreateGlobalPrivilege)
+#define MK_RING_NAME_LOCAL L"Local\\Macawlink.Video.v2"   // fallback if the source runs inside the app's session
 #define MK_RING_MAGIC   0x43564B4Du  // "MKVC"
 #define MK_RING_VERSION 2u  // 2: slots sized for 2560x1440
 #define MK_RING_SLOTS   3

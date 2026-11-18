@@ -18,7 +18,7 @@ func TestExtract(t *testing.T) {
 	zw.Close()
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "macawlink.exe"), []byte("old"), 0o644) // upgrade over an old file
-	if err := extract(buf.Bytes(), dir); err != nil {
+	if _, err := extract(buf.Bytes(), dir); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(filepath.Join(dir, "macawlink.exe")); string(b) != "new-exe" {

@@ -14,14 +14,15 @@ import (
 
 // extract unpacks the embedded zip. Files still mapped by other processes (the DirectShow
 // camera inside a browser, Frame Server) can't be overwritten but can be renamed, so they are
-// moved aside as *.old-<time> and cleaned up on the next run.
-func extract(z []byte, dst string) error {
+// moved aside as *.old-<time> and cleaned up on the next run. It returns the names of files
+// that were in use: the apps holding them keep running the old code until they restart.
+func extract(z []byte, dst string) (inUse []string, err error) {
 	r, err := zip.NewReader(bytes.NewReader(z), int64(len(z)))
 	if err != nil {
-		return fmt.Errorf("corrupt installer: %w", err)
+		return nil, fmt.Errorf("corrupt installer: %w", err)
 	}
 	if err := os.MkdirAll(dst, 0o755); err != nil {
-		return err
+		return nil, err
 	}
 	stamp := time.Now().Format("20060102150405")
 	for _, f := range r.File {
@@ -34,16 +35,18 @@ func extract(z []byte, dst string) error {
 		if err != nil {
 			// In use: rename the old one out of the way and try again.
 			if rerr := os.Rename(target, target+".old-"+stamp); rerr != nil {
-				return fmt.Errorf("%s is in use; close apps using Macawlink Camera and run setup again (%v)", f.Name, err)
+				return inUse, fmt.Errorf("%s is in use; close apps using Macawlink Camera and run setup again (%v)", f.Name, err)
 			}
+			log.Printf("  %s was in use: moved aside", f.Name)
+			inUse = append(inUse, f.Name)
 			if out, err = os.Create(target); err != nil {
-				return err
+				return inUse, err
 			}
 		}
 		in, err := f.Open()
 		if err != nil {
 			out.Close()
-			return err
+			return inUse, err
 		}
 		_, err = io.Copy(out, in)
 		in.Close()
@@ -51,11 +54,11 @@ func extract(z []byte, dst string) error {
 			err = cerr
 		}
 		if err != nil {
-			return fmt.Errorf("write %s: %w", f.Name, err)
+			return inUse, fmt.Errorf("write %s: %w", f.Name, err)
 		}
 		log.Printf("  %s (%d KB)", f.Name, f.UncompressedSize64/1024)
 	}
-	return nil
+	return inUse, nil
 }
 
 func cleanupOld(dir string) {

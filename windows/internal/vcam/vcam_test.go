@@ -3,6 +3,8 @@ package vcam
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -48,5 +50,12 @@ func TestPublishLayout(t *testing.T) {
 	}
 	if err := r.Publish(make([]byte, 10), 3840, 2160, 0); err == nil {
 		t.Fatal("expected size error")
+	}
+}
+
+func TestRingNameCarriesLayoutVersion(t *testing.T) {
+	want := fmt.Sprintf(".v%d", Version)
+	if !strings.HasSuffix(RingName, want) {
+		t.Fatalf("RingName %q must end in %q so older DLLs can't attach to a differently laid out ring", RingName, want)
 	}
 }

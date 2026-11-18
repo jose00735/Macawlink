@@ -77,7 +77,8 @@ func main() {
 	install.StopRunning()
 	time.Sleep(500 * time.Millisecond)
 	cleanupOld(install.Dir())
-	if err := extract(payload, install.Dir()); err != nil {
+	inUse, err := extract(payload, install.Dir())
+	if err != nil {
 		fail(err)
 	}
 
@@ -92,6 +93,14 @@ func main() {
 
 	if silent {
 		return
+	}
+	if len(inUse) > 0 {
+		// An app (usually the browser) still runs the previous camera code; it shows the
+		// "waiting" card until it restarts.
+		install.MessageBox(title,
+			"Some apps still have the previous Macawlink Camera loaded (usually your browser or a call app).\n\n"+
+				"Close them completely and open them again, or restart the PC, before using the camera.",
+			install.MBOK|install.MBIconWarning)
 	}
 	if !hasVirtualMic() {
 		if install.MessageBox(title,

@@ -33,7 +33,7 @@ and mic were plugged in:
 │   ├─ ping/RTT, phone stats, live SET_CONFIG                              │  │
 │ tray (Win32) + settings page http://127.0.0.1:47801                      │  │
 └──────────────────────────────────────────────────────────────────────────┼──┘
-                     shared-memory ring  Global\Macawlink.Video (NV12 × 3) ▼
+                     shared-memory ring  Global\Macawlink.Video.v2 (NV12 × 3) ▼
 ┌──────── macawlink_native.dll inside Windows Frame Server ────────────────────┐
 │ IMFActivate ▶ MkSource (IMFMediaSourceEx) ▶ MkStream (IMFMediaStream2)        │
 │ paces samples at the negotiated fps; copies the newest frame, or a           │
@@ -50,7 +50,7 @@ and mic were plugged in:
 - The DLL is registered in **HKLM** once (installer, admin). Frame Server runs as LOCAL SERVICE and cannot see HKCU.
 - `macawlink.exe` calls `mk_vcam_start` at launch (session lifetime, current user), so the camera exists while the tray app runs.
 - Formats offered (NV12): 1280×720@30 (default), 1920×1080@30, 640×480@30, 1280×720@60, 1920×1080@60, 2560×1440@30.
-- **Frame hand-off:** the DLL (consumer) creates `Global\Macawlink.Video` with a DACL for the user, LOCAL SERVICE and app containers. If it can't create Global objects it falls back to `Local\`. Go (producer) opens it.
+- **Frame hand-off:** the DLL (consumer) creates `Global\Macawlink.Video.v2` with a DACL for the user, LOCAL SERVICE and app containers. If it can't create Global objects it falls back to `Local\`. Go (producer) opens it.
   - The 256-byte header holds the latest slot, the per-slot size and pts, the `connected` flag, and the format the app opened (`reqWidth/Height/Fps`).
   - Layout is pinned by `static_assert`s in `ring.h` and by `vcam_test.go`.
 - Go scales to exactly what the app opened. The DLL does nearest-neighbour as a stop-gap during format switches.
@@ -59,7 +59,7 @@ and mic were plugged in:
 
 ### 2.1b Windows 10: DirectShow camera (`windows/native/dshow_filter.cpp`)
 - Windows 10 has no virtual-camera API, so the same DLL also contains a **DirectShow video capture filter**. It is registered in the video input device category, which is how OBS Virtual Camera appears too.
-- Apps load it into their own process: Chrome/Edge (and WebView2 apps like the new Teams), Zoom, Discord and OBS. It reads the **session-local** ring `Local\Macawlink.Video`, which `macawlink.exe` creates at startup.
+- Apps load it into their own process: Chrome/Edge (and WebView2 apps like the new Teams), Zoom, Discord and OBS. It reads the **session-local** ring `Local\Macawlink.Video.v2`, which `macawlink.exe` creates at startup.
 - It is a single capture pin with `IAMStreamConfig` (12 formats: 720p/1080p/480p/1440p × YUY2/NV12/I420, 5–60 fps) and `IKsPropertySet` (pin category capture). Samples are pushed through the downstream allocator from a paced worker thread.
 - **Limit:** Microsoft Store apps on Windows 10 (the Camera app, error `NoCamerasAreAttached`) enumerate only kernel-streaming devices. Reaching them needs an AVStream kernel driver (Phase 3, same signing requirement as the microphone driver).
 - A 32-bit build (`macawlink_native32.dll`, registered with SysWOW64 `regsvr32`) covers 32-bit apps.

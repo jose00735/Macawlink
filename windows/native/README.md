@@ -5,7 +5,7 @@ One x64 DLL with everything Windows only exposes through COM:
 | Part | File | What it does |
 |---|---|---|
 | Virtual camera | `vcam_source.*`, `exports.cpp` | `IMFActivate` → `MkSource` (`IMFMediaSourceEx`, `IMFGetService`, `IKsControl`, `IMFSampleAllocatorControl`) → `MkStream` (`IMFMediaStream2`). Frame Server loads it for “Macawlink Camera”. It paces samples at the negotiated fps and copies frames from the shared ring (`ring.h`), or draws the waiting card. |
-| Windows 10 camera | `dshow_filter.cpp` | DirectShow capture filter (`IBaseFilter`, capture pin with `IAMStreamConfig` + `IKsPropertySet`) in the video input category; YUY2/NV12/I420; reads `Local\Macawlink.Video`. Registered only when the MF virtual camera is unavailable. |
+| Windows 10 camera | `dshow_filter.cpp` | DirectShow capture filter (`IBaseFilter`, capture pin with `IAMStreamConfig` + `IKsPropertySet`) in the video input category; YUY2/NV12/I420; reads `Local\Macawlink.Video.v2`. Registered only when the MF virtual camera is unavailable. |
 | Frame reader | `ring_reader.*` | Shared by both cameras: maps the ring, copies or scales the newest frame, draws the waiting card |
 | Camera lifetime | `exports.cpp` | `mk_vcam_supported/start/stop` wrap `MFCreateVirtualCamera` (loaded dynamically from `mfsensorgroup.dll`). `DllRegisterServer` writes HKLM. |
 | Decoder | `decoder.cpp` | `mk_dec_*`: Microsoft H.264/HEVC MFT in low-latency mode, output as tight NV12 |

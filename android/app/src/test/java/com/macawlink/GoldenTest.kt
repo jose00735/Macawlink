@@ -66,4 +66,16 @@ class PairingGoldenTest {
         org.junit.Assert.assertEquals(s("sas"), com.macawlink.protocol.Pairing.sas(fp, pc, ph))
         org.junit.Assert.assertEquals(s("commit"), com.macawlink.protocol.Pairing.commit(pc))
     }
+
+    @Test fun rotationHysteresis() {
+        val q = CameraController::quadrantWithHysteresis
+        assertEquals(0, q(50, 0))     // just past 45°: stay
+        assertEquals(0, q(310, 0))
+        assertEquals(90, q(70, 0))    // clearly turned
+        assertEquals(270, q(290, 0))
+        assertEquals(90, q(30, 90))   // jitter back toward 0 is ignored
+        assertEquals(0, q(20, 90))
+        assertEquals(180, q(180, 0))
+        assertEquals(0, q(359, 0))
+    }
 }

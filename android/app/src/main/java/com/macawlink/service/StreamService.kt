@@ -507,7 +507,7 @@ class StreamService : Service() {
         private const val CHANNEL = "stream"
         private const val NOTIF_ID = 1
         const val ACTION_STOP = "com.macawlink.STOP"
-        const val APP_VERSION = "0.3.0"
+        const val APP_VERSION = "0.3.1"
 
         fun start(ctx: Context) = ContextCompat.startForegroundService(ctx, Intent(ctx, StreamService::class.java))
         fun stop(ctx: Context) = ctx.startService(Intent(ctx, StreamService::class.java).setAction(ACTION_STOP))

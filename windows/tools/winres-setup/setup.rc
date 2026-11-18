@@ -2,8 +2,8 @@
 1 ICON "../../../assets/icon/macawlink.ico"
 1 24 "setup.manifest"
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 0,3,0,0
- PRODUCTVERSION 0,3,0,0
+ FILEVERSION 0,3,1,0
+ PRODUCTVERSION 0,3,1,0
  FILEOS VOS_NT_WINDOWS32
  FILETYPE VFT_APP
 BEGIN
@@ -13,9 +13,9 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "Macawlink"
       VALUE "FileDescription", "Macawlink setup"
-      VALUE "FileVersion", "0.3.0"
+      VALUE "FileVersion", "0.3.1"
       VALUE "ProductName", "Macawlink"
-      VALUE "ProductVersion", "0.3.0"
+      VALUE "ProductVersion", "0.3.1"
       VALUE "OriginalFilename", "MacawlinkSetup.exe"
       VALUE "LegalCopyright", "Jose Acosta Hernandez"
     END

@@ -17,7 +17,7 @@ const (
 	fileMapAllAccess = 0xF001F
 	// RingNameLocal is the session-local ring read by the DirectShow camera (it runs inside
 	// each app's process on Windows 10). We create it at startup.
-	RingNameLocal = `Local\Macawlink.Video`
+	RingNameLocal = `Local\Macawlink.Video.v2`
 )
 
 var ErrNoRing = errors.New("vcam: camera not opened by any app yet")

@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	RingName    = `Global\Macawlink.Video`
+	RingName    = `Global\Macawlink.Video.v2`
 	Magic       = 0x43564B4D // "MKVC"
 	Version     = 2          // 2: slots sized for 2560x1440
 	Slots       = 3

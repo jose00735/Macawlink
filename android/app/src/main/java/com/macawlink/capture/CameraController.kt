@@ -56,17 +56,34 @@ class CameraController(
     private var preview: android.view.Surface? = null
     private var previewInSession = false
 
+    /** Device orientation (0/90/180/270) currently applied, before the sensor offset. */
+    private var deviceQuadrant = 0
+    private var pendingQuadrant = -1
+    private var pendingSince = 0L
+
     private val orientation = object : OrientationEventListener(context) {
         override fun onOrientationChanged(deg: Int) {
             if (deg == ORIENTATION_UNKNOWN) return
-            var d = (deg + 45) / 90 * 90 % 360
-            if (facingFront) d = -d
-            val r = (sensorOrientation + d + 360) % 360
+            // Hysteresis: a phone held near 45° (or lying almost flat) jitters across the
+            // boundary; only switch once it is clearly in the new quadrant and stays there.
+            val q = quadrantWithHysteresis(deg, deviceQuadrant)
+            val now = android.os.SystemClock.uptimeMillis()
+            if (q == deviceQuadrant) { pendingQuadrant = -1; return }
+            if (q != pendingQuadrant) { pendingQuadrant = q; pendingSince = now; return }
+            if (now - pendingSince < ROTATION_SETTLE_MS) return
+            deviceQuadrant = q
+            pendingQuadrant = -1
+            val r = rotationFor(q)
             if (r != rotation) {
                 rotation = r
                 handler.post { if (lastCsd.isNotEmpty()) sendConfig() }
             }
         }
+    }
+
+    private fun rotationFor(quadrant: Int): Int {
+        val d = if (facingFront) -quadrant else quadrant
+        return (sensorOrientation + d + 360) % 360
     }
 
     /** Capabilities for HELLO. */
@@ -138,6 +155,7 @@ class CameraController(
         val ch = manager.getCameraCharacteristics(id)
         sensorOrientation = ch.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90
         facingFront = ch.get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_FRONT
+        rotation = rotationFor(deviceQuadrant) // camera switched: same pose, new sensor offset
         val map = ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)!!
         val (sw, sh) = pickSize(map.getOutputSizes(MediaCodec::class.java).orEmpty().map { it.width to it.height }, s.width, s.height)
         val size = Size(sw, sh)
@@ -296,6 +314,15 @@ class CameraController(
 
     companion object {
         private const val TAG = "MacawlinkCamera"
+        const val ROTATION_SETTLE_MS = 400L
+        private const val ROTATION_MARGIN = 20 // degrees past the 45° boundary
+
+        /** Quadrant (0/90/180/270) for [deg], keeping [current] until deg is clearly past it. */
+        fun quadrantWithHysteresis(deg: Int, current: Int): Int {
+            val diff = ((deg - current + 540) % 360) - 180 // -180..179
+            if (abs(diff) <= 45 + ROTATION_MARGIN) return current
+            return (deg + 45) / 90 * 90 % 360
+        }
 
         /** Exact size if offered, else the closest one with the same aspect, else the closest area. */
         fun pickSize(sizes: List<Pair<Int, Int>>, w: Int, h: Int): Pair<Int, Int> {
