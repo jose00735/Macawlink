@@ -26,11 +26,14 @@ enum class MsgType(val code: Int) {
     SET_CONFIG(0x30), CONFIG_STATE(0x31), REQUEST_KEYFRAME(0x32), CAMERA_CONTROL(0x33),
     PING(0x40), PONG(0x41), STATS(0x42),
     PAIR_BEGIN(0x50), PAIR_NONCE(0x51), PAIR_REVEAL(0x52), PAIR_CONFIRM(0x53), PAIR_RESULT(0x54),
-    BYE(0x7F);
+    PROMPTER_SCRIPT(0x60), PROMPTER_STATE(0x61), PROMPTER_CLEAR(0x62), PROMPTER_KEY(0x63),
+    BYE(0x7F),
+    /** A type this version doesn't know: read and ignored, so newer PCs never break the link. */
+    UNKNOWN(-1);
 
     companion object {
         private val byCode = entries.associateBy { it.code }
-        fun of(code: Int) = byCode[code] ?: throw IOException("unknown type $code")
+        fun of(code: Int) = byCode[code] ?: UNKNOWN
     }
 }
 

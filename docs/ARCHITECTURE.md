@@ -166,6 +166,16 @@ Video is held back by the audio currently queued in the virtual mic (0–200 ms)
 ### Phone preview
 Optional. The UI's `SurfaceView` becomes a second output of the Camera2 session, sized like the encoder. If the device can't run both at that size, the session is rebuilt without the preview.
 
+### Teleprompter on the phone (v0.4.0)
+TeleCyborg (the teleprompter, github.com/jose00735/telecyborg) feeds its running script to the
+receiver's local API; the receiver forwards it with `PROMPTER_*` messages to phones that announce
+the `prompter` feature. The phone app (`ui/PrompterView.kt`) shows it full screen next to the
+front lens — left or right edge in landscape from the display rotation, top in portrait — with
+the camera preview optionally behind it. It scrolls to the PC's position and moves smoothly
+between updates using the sent speed. Taps go back as `PROMPTER_KEY`. The view is plain UI on top
+of the preview surface, so nothing reaches the encoder or the call.
+`cmd/devreceiver` runs the receiver logic with a fake phone on any OS to test this end to end.
+
 ## 7. Latency and sync
 - Low-latency MediaCodec settings, no B-frames, a realtime-priority encoder, `CODECAPI_AVLowLatencyMode` on the decoder, and TCP_NODELAY on both ends.
 - Video is shown as soon as it is decoded; the camera paces delivery at the negotiated fps.

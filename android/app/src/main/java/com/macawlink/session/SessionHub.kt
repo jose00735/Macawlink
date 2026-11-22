@@ -41,5 +41,12 @@ object SessionHub {
     val previewSurface = MutableStateFlow<Surface?>(null)
     val linkMode = MutableStateFlow(LinkMode.AUTO)
 
+    /** Teleprompter text from the PC (TeleCyborg), or null when none is shown. */
+    val prompter = MutableStateFlow<com.macawlink.protocol.PrompterScript?>(null)
+    /** Latest position with the time it arrived (System.nanoTime), for smooth motion. */
+    val prompterState = MutableStateFlow<Pair<com.macawlink.protocol.PrompterState, Long>?>(null)
+    /** Taps on the phone's prompter, sent to the PC as PROMPTER_KEY. */
+    val prompterKeys = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 16)
+
     fun update(f: (LinkState) -> LinkState) = state.update(f)
 }

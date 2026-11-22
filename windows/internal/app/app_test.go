@@ -209,6 +209,60 @@ func TestEndToEndWithFakePhone(t *testing.T) {
 	}
 }
 
+// The teleprompter feed reaches phones that announce "prompter", is re-sent after a reconnect,
+// carries taps back, and never reaches phones without the feature.
+func TestPrompterFeed(t *testing.T) {
+	for _, supports := range []bool{true, false} {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec := &fakephone.Received{}
+		done := make(chan struct{})
+		opt := fakephone.Options{Model: "Pixel", Settings: config.Default(), AudioOnly: true}
+		if supports {
+			opt.Features, opt.PrompterKey = []string{protocol.FeaturePrompter}, "next"
+		}
+		go func() {
+			c, err := ln.Accept()
+			if err == nil {
+				fakephone.Serve(c, opt, rec, done)
+			}
+		}()
+		a := New(Options{
+			Addr:       ln.Addr().String(),
+			NewDecoder: func(int) (native.Decoder, error) { return &fakeDecoder{}, nil },
+			OpenAudio:  func(rate, ch int) (native.AudioOut, error) { return &fakeAudio{}, nil },
+		}, config.Default())
+		// TeleCyborg starts before the phone connects: the script waits and is sent on connect.
+		a.SetPrompterScript([]byte(`{"id":"pitch","blocks":[{"k":"para","t":"Hello"}]}`))
+		ctx, cancel := context.WithCancel(context.Background())
+		go a.Run(ctx)
+		waitFor(t, "streaming", func() bool { return a.Status().Phase == PhaseStreaming })
+		if got := a.Prompter().Phone; got != supports {
+			t.Fatalf("supports=%v: Prompter().Phone = %v", supports, got)
+		}
+		a.SetPrompterState([]byte(`{"id":"pitch","para":0,"frac":0.5}`))
+		if supports {
+			waitFor(t, "script+state", func() bool { sc, st, _ := rec.Prompter(); return len(sc) == 1 && len(st) == 1 })
+			waitFor(t, "tap", func() bool { a.mu.Lock(); defer a.mu.Unlock(); return len(a.prompterKeys) == 1 })
+			if k := a.PrompterKeys(); len(k) != 1 || k[0] != "next" {
+				t.Fatalf("keys = %v", k)
+			}
+			a.ClearPrompter()
+			waitFor(t, "clear", func() bool { _, _, n := rec.Prompter(); return n == 1 })
+		} else {
+			time.Sleep(300 * time.Millisecond)
+			if sc, st, _ := rec.Prompter(); len(sc)+len(st) != 0 {
+				t.Fatal("prompter sent to a phone without the feature")
+			}
+		}
+		close(done)
+		cancel()
+		ln.Close()
+	}
+}
+
 func TestSplitAnnexB(t *testing.T) {
 	aus, csd := fakephone.SplitAnnexB(fakeH264)
 	if len(aus) != 3 || !aus[0].Key || aus[1].Key || len(csd) != 16 {

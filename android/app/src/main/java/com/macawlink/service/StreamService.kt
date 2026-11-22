@@ -33,6 +33,10 @@ import com.macawlink.protocol.PairBeginMsg
 import com.macawlink.protocol.PairConfirmMsg
 import com.macawlink.protocol.PairNonceMsg
 import com.macawlink.protocol.PairResultMsg
+import com.macawlink.protocol.FEATURE_PROMPTER
+import com.macawlink.protocol.PrompterKeyMsg
+import com.macawlink.protocol.PrompterScript
+import com.macawlink.protocol.PrompterState
 import com.macawlink.protocol.Pairing
 import com.macawlink.protocol.Proto
 import com.macawlink.protocol.ProtoJson
@@ -235,7 +239,7 @@ class StreamService : Service() {
                 model = Build.MODEL, manufacturer = Build.MANUFACTURER.replaceFirstChar { it.uppercase() },
                 appVersion = APP_VERSION, cameras = cam.describeCameras(),
                 phoneId = if (wifi != null) wifiStore.phoneId else null,
-                token = wifi?.paired?.token)).toByteArray())
+                token = wifi?.paired?.token, features = listOf(FEATURE_PROMPTER))).toByteArray())
             val pcName = awaitAck(c, wifi)
 
             val settings = SessionHub.settings.value
@@ -256,6 +260,11 @@ class StreamService : Service() {
                 }
                 launch { SessionHub.previewSurface.collect { cam.setPreview(it) } }
                 launch { adaptiveBitrate(c, cam) }
+                launch { // taps on the phone's teleprompter go back to the PC
+                    SessionHub.prompterKeys.collect { k ->
+                        runCatching { c.send(MsgType.PROMPTER_KEY, ProtoJson.encodeToString(PrompterKeyMsg.serializer(), PrompterKeyMsg(k)).toByteArray()) }
+                    }
+                }
                 while (isActive) {
                     delay(2000)
                     sendStats(c)
@@ -273,6 +282,8 @@ class StreamService : Service() {
         } finally {
             sessionJob?.cancel()
             SessionHub.pairing.value = null
+            SessionHub.prompter.value = null
+            SessionHub.prompterState.value = null
             cam.release()
             audio?.stop()
             audio = null
@@ -353,6 +364,14 @@ class StreamService : Service() {
                 SessionHub.settings.value = next // collector applies it and answers CONFIG_STATE
             }.onFailure { Log.w(TAG, "bad SET_CONFIG", it) }
             MsgType.REQUEST_KEYFRAME -> camera?.requestKeyframe()
+            MsgType.PROMPTER_SCRIPT -> runCatching {
+                SessionHub.prompter.value = ProtoJson.decodeFromString(PrompterScript.serializer(), p.payload.decodeToString())
+                SessionHub.prompterState.value = null
+            }.onFailure { Log.w(TAG, "bad PROMPTER_SCRIPT", it) }
+            MsgType.PROMPTER_STATE -> runCatching {
+                SessionHub.prompterState.value = ProtoJson.decodeFromString(PrompterState.serializer(), p.payload.decodeToString()) to System.nanoTime()
+            }
+            MsgType.PROMPTER_CLEAR -> { SessionHub.prompter.value = null; SessionHub.prompterState.value = null }
             MsgType.PING -> {
                 val pong = ByteBuffer.allocate(16).order(ByteOrder.BIG_ENDIAN)
                 pong.put(p.payload, 0, minOf(8, p.payload.size)).position(8)
@@ -507,7 +526,7 @@ class StreamService : Service() {
         private const val CHANNEL = "stream"
         private const val NOTIF_ID = 1
         const val ACTION_STOP = "com.macawlink.STOP"
-        const val APP_VERSION = "0.3.1"
+        const val APP_VERSION = "0.4.0"
 
         fun start(ctx: Context) = ContextCompat.startForegroundService(ctx, Intent(ctx, StreamService::class.java))
         fun stop(ctx: Context) = ctx.startService(Intent(ctx, StreamService::class.java).setAction(ACTION_STOP))

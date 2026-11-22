@@ -26,7 +26,7 @@ import (
 	"github.com/jose00735/macawlink/windows/internal/video"
 )
 
-const Version = "0.3.1"
+const Version = "0.4.0"
 
 // Phases shown in the UI.
 const (
@@ -108,6 +108,12 @@ type App struct {
 
 	video *video.Pipeline
 	audio *audio.Pipeline
+
+	// teleprompter feed (TeleCyborg → phone screen); kept so a reconnecting phone gets it again
+	prompterOK     bool   // the connected phone announced "prompter"
+	prompterScript []byte // last PROMPTER_SCRIPT payload
+	prompterState  []byte // last PROMPTER_STATE payload
+	prompterKeys   []string
 }
 
 func New(opt Options, s config.Settings) *App {
@@ -420,11 +426,20 @@ func (a *App) session(ctx context.Context, conn net.Conn, helloPkt protocol.Pack
 	a.status.Device, a.status.Serial, a.status.Cameras = name, dev.Serial, hello.Cameras
 	a.status.Transport = transportName
 	a.setConnectedLocked(true)
+	a.prompterOK = hello.HasFeature(protocol.FeaturePrompter)
+	script, pstate := a.prompterScript, a.prompterState
 	a.mu.Unlock()
+	defer func() { a.mu.Lock(); a.prompterOK = false; a.mu.Unlock() }()
 	host, _ := os.Hostname()
 	ack, _ := json.Marshal(protocol.HelloAckMsg{PCName: host, Protocol: 1})
 	if err := a.send(protocol.HelloAck, 0, ack); err != nil {
 		return err
+	}
+	if hello.HasFeature(protocol.FeaturePrompter) && script != nil {
+		a.send(protocol.PrompterScript, 0, script)
+		if pstate != nil {
+			a.send(protocol.PrompterState, 0, pstate)
+		}
 	}
 	a.setPhase(PhaseStreaming, "Streaming from "+name)
 
@@ -533,6 +548,15 @@ func (a *App) session(ctx context.Context, conn net.Conn, helloPkt protocol.Pack
 				a.status.RTTms = float64(time.Now().UnixNano()-sent) / 1e6
 				a.mu.Unlock()
 			}
+		case protocol.PrompterKey:
+			var k protocol.PrompterKeyMsg
+			if json.Unmarshal(p.Payload, &k) == nil && k.Key != "" {
+				a.mu.Lock()
+				if len(a.prompterKeys) < 32 {
+					a.prompterKeys = append(a.prompterKeys, k.Key)
+				}
+				a.mu.Unlock()
+			}
 		case protocol.Bye:
 			return errors.New("phone said bye: " + string(p.Payload))
 		}
@@ -619,6 +643,66 @@ func (a *App) ApplyPreset(name string) error {
 }
 
 func (a *App) RequestKeyframe() { a.send(protocol.RequestKeyframe, 0, nil) }
+
+// PrompterInfo says whether a phone that can show the teleprompter is streaming.
+type PrompterInfo struct {
+	Available bool   `json:"available"`
+	Phone     bool   `json:"phone"` // a connected phone supports the prompter
+	Device    string `json:"device,omitempty"`
+	Active    bool   `json:"active"` // a script is being shown
+}
+
+// Prompter reports the teleprompter feed state.
+func (a *App) Prompter() PrompterInfo {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return PrompterInfo{Available: true, Phone: a.prompterOK, Device: a.status.Device, Active: a.prompterScript != nil}
+}
+
+// SetPrompterScript forwards teleprompter text (JSON from TeleCyborg) to the phone.
+func (a *App) SetPrompterScript(payload []byte) {
+	a.mu.Lock()
+	a.prompterScript, a.prompterState = payload, nil
+	ok := a.prompterOK
+	a.mu.Unlock()
+	if ok {
+		a.send(protocol.PrompterScript, 0, payload)
+	}
+}
+
+// SetPrompterState forwards the reading position.
+func (a *App) SetPrompterState(payload []byte) {
+	a.mu.Lock()
+	a.prompterState = payload
+	ok := a.prompterOK && a.prompterScript != nil
+	a.mu.Unlock()
+	if ok {
+		a.send(protocol.PrompterState, 0, payload)
+	}
+}
+
+// ClearPrompter hides the teleprompter on the phone.
+func (a *App) ClearPrompter() {
+	a.mu.Lock()
+	a.prompterScript, a.prompterState, a.prompterKeys = nil, nil, nil
+	ok := a.prompterOK
+	a.mu.Unlock()
+	if ok {
+		a.send(protocol.PrompterClear, 0, nil)
+	}
+}
+
+// PrompterKeys returns and clears the taps made on the phone.
+func (a *App) PrompterKeys() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	k := a.prompterKeys
+	a.prompterKeys = nil
+	if k == nil {
+		k = []string{}
+	}
+	return k
+}
 
 func (a *App) Status() Status {
 	v, au := a.video.Stats(), a.audio.Stats()

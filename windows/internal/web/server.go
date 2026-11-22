@@ -4,6 +4,7 @@ package web
 import (
 	"embed"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -27,6 +28,11 @@ type API interface {
 	PairDecision(accept bool) error
 	PairedPhones() []pairing.Phone
 	ForgetPhone(id string)
+	Prompter() app.PrompterInfo
+	SetPrompterScript([]byte)
+	SetPrompterState([]byte)
+	ClearPrompter()
+	PrompterKeys() []string
 }
 
 type options struct {
@@ -91,6 +97,38 @@ func Handler(api API) http.Handler {
 	mux.HandleFunc("POST /api/paired/{id}/forget", func(w http.ResponseWriter, r *http.Request) {
 		api.ForgetPhone(r.PathValue("id"))
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	})
+	// Teleprompter feed from TeleCyborg (github.com/jose00735/telecyborg) on this PC: the text is
+	// shown over the camera preview on the phone screen, never in the video stream.
+	mux.HandleFunc("GET /api/prompter", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, api.Prompter())
+	})
+	prompterBody := func(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
+		b, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+		if err != nil || !json.Valid(b) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "body must be JSON (max 1 MiB)"})
+			return nil, false
+		}
+		return b, true
+	}
+	mux.HandleFunc("POST /api/prompter/script", func(w http.ResponseWriter, r *http.Request) {
+		if b, ok := prompterBody(w, r); ok {
+			api.SetPrompterScript(b)
+			writeJSON(w, http.StatusOK, api.Prompter())
+		}
+	})
+	mux.HandleFunc("POST /api/prompter/state", func(w http.ResponseWriter, r *http.Request) {
+		if b, ok := prompterBody(w, r); ok {
+			api.SetPrompterState(b)
+			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		}
+	})
+	mux.HandleFunc("POST /api/prompter/clear", func(w http.ResponseWriter, r *http.Request) {
+		api.ClearPrompter()
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	})
+	mux.HandleFunc("GET /api/prompter/keys", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"keys": api.PrompterKeys()})
 	})
 	mux.HandleFunc("POST /api/keyframe", func(w http.ResponseWriter, r *http.Request) {
 		api.RequestKeyframe()

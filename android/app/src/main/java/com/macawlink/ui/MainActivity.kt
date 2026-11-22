@@ -125,6 +125,15 @@ class MainActivity : ComponentActivity() {
 private fun Home(onStart: () -> Unit, onStop: () -> Unit, onSettings: (StreamSettings) -> Unit) {
     val state by SessionHub.state.collectAsState()
     val s by SessionHub.settings.collectAsState()
+    // Teleprompter from TeleCyborg on the PC: full screen next to the lens, until closed.
+    val prompter by SessionHub.prompter.collectAsState()
+    var closedFor by remember { mutableStateOf("") }
+    var promptCam by remember { mutableStateOf(false) }
+    val p = prompter
+    if (p != null && state.phase == Phase.STREAMING && closedFor != p.id + p.track) {
+        PrompterView(p, state.width, state.height, promptCam, onCamera = { promptCam = it }, onClose = { closedFor = p.id + p.track })
+        return
+    }
     Box(
         Modifier.fillMaxSize().background(
             Brush.verticalGradient(listOf(Color(0xFF1B0B3A), Deep, Color(0xFF05020F)))
@@ -148,6 +157,13 @@ private fun Home(onStart: () -> Unit, onStop: () -> Unit, onSettings: (StreamSet
                     "Hold the phone in landscape — the picture is turned upright automatically.",
                 color = Dim, fontSize = 13.sp,
             )
+            if (p != null && state.phase == Phase.STREAMING) {
+                Button(onClick = { closedFor = "" }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF07343A), contentColor = Cyan)) {
+                    Text("OPEN TELEPROMPTER · ${p.title}", fontFamily = Mono, maxLines = 1)
+                }
+                if (s.video.lens != "front") Text("Read from the phone with the front camera: switch Lens to front.", color = Warn, fontSize = 13.sp)
+            }
             var showPreview by remember { mutableStateOf(false) }
             if (state.phase == Phase.STREAMING) {
                 Toggle("Show preview on the phone", showPreview) { showPreview = it }

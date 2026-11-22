@@ -43,9 +43,24 @@ The phone always sends `HELLO` first and **waits for `HELLO_ACK`** before sendin
 | `0x52` | `PAIR_REVEAL` | PC→phone | `{nonce}` = pc_nonce; the phone checks it against `commit` |
 | `0x53` | `PAIR_CONFIRM` | phone→PC | `{ok}` after the phone user compared the code |
 | `0x54` | `PAIR_RESULT` | PC→phone | `{ok, token?, reason?}`. `ok` only if both users accepted. |
+| `0x60` | `PROMPTER_SCRIPT` | PC→phone | teleprompter text: `{id, title, track:"main"\|"answer", blocks:[{k:"sec"\|"para"\|"cue", t}], font_scale, mirror}` (`**word**` in `t` = stress) |
+| `0x61` | `PROMPTER_STATE` | PC→phone | position, ~8 Hz: `{id, para, frac, speed, playing, wpm, clock, alert, hint}`; `para` counts `"para"` blocks, `frac` 0–1, `speed` frac/s for motion between updates, `alert` `""`\|`behind`\|`ahead`\|`miss`\|`wrap` |
+| `0x62` | `PROMPTER_CLEAR` | PC→phone | empty: hide the teleprompter |
+| `0x63` | `PROMPTER_KEY` | phone→PC | `{key}`: `toggle`, `next`, `prev`, `faster`, `slower` (a tap on the phone's teleprompter) |
 | `0x7F` | `BYE` | both | `{reason}` (e.g. `busy`) |
 
 `HELLO` over Wi-Fi also carries `phone_id` (random, stable) and `token` (from an earlier pairing).
+`HELLO` may carry `features`, a list of optional abilities. `"prompter"` (v0.4.0) means the phone
+shows the teleprompter messages `0x60`–`0x63`; the PC sends them **only** to such phones.
+From v0.4.0 the phone reads and ignores message types it does not know, so later additions never
+break a link (older phones close the connection on an unknown type, which is why `features` exists).
+
+### Teleprompter feed (v0.4.0)
+[TeleCyborg](https://github.com/jose00735/telecyborg) on the same PC posts the text and position to
+the local settings API (`POST /api/prompter/script`, `/state`, `/clear`; `GET /api/prompter` and
+`/api/prompter/keys`; POSTs need `X-Macawlink: 1`). The PC keeps the last script and state and
+sends them again when a phone (re)connects. The phone shows the text full screen beside the front
+lens, above the camera preview; it is never drawn into the video. Fixtures: `proto-golden/prompter.json`.
 
 ### Wi-Fi pairing (numeric comparison, like Bluetooth)
 1. Without a valid `phone_id` + `token`, the PC answers `HELLO` with `PAIR_BEGIN`, which commits to its nonce.
