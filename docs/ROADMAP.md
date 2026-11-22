@@ -26,6 +26,12 @@
 - [x] 1440p (2560×1440) end to end: phone encoder, frame ring, Windows 11 and Windows 10 cameras
 - [ ] Several phones as several cameras (moved to Phase 5)
 
+## TeleCyborg integration ✅ (v0.4.0)
+- [x] Teleprompter feed: `PROMPTER_SCRIPT/STATE/CLEAR/KEY`, `features` in HELLO, local API `/api/prompter/*`
+- [x] Phone: full-screen teleprompter beside the front lens, tap/swipe control, optional preview behind it
+- [x] Forward compatibility: the phone ignores unknown message types
+- [x] Tests: feed only to capable phones, re-send on reconnect, taps back; Kotlin fixtures; rendered snapshot; `cmd/devreceiver`
+
 ## Phase 4: Drivers (blocked: needs an EV code-signing certificate + Microsoft attestation signing)
 Windows refuses to load unsigned kernel drivers, so these can't ship until a certificate is bought (~US$300/yr).
 - [ ] SYSVAD-based “Macawlink Microphone” driver (replaces VB-Audio Virtual Cable)

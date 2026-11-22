@@ -1,0 +1,5 @@
+{
+  "script": {"id": "terrific-pitch", "title": "Terrific pitch", "track": "main", "blocks": [{"k": "sec", "t": "Opening"}, {"k": "para", "t": "Hi, I'm **Jose**."}, {"k": "cue", "t": "smile"}], "font_scale": 1.25, "mirror": false},
+  "state": {"id": "terrific-pitch", "para": 0, "frac": 0.5, "speed": 0.12, "playing": true, "wpm": 140, "clock": "0:12 / 1:30", "alert": "behind", "hint": "speed up to 152 wpm"},
+  "key": {"key": "next"}
+}

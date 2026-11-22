@@ -19,6 +19,25 @@ type HelloMsg struct {
 	Cameras      []CameraInfo `json:"cameras"`
 	PhoneID      string       `json:"phone_id,omitempty"` // Wi-Fi: stable random id of this phone
 	Token        string       `json:"token,omitempty"`    // Wi-Fi: secret from a previous pairing
+	Features     []string     `json:"features,omitempty"` // optional abilities, e.g. "prompter"
+}
+
+// HasFeature reports whether the phone announced an optional ability.
+func (h HelloMsg) HasFeature(f string) bool {
+	for _, x := range h.Features {
+		if x == f {
+			return true
+		}
+	}
+	return false
+}
+
+// FeaturePrompter: the phone can show a teleprompter over its camera preview (0x60–0x63).
+const FeaturePrompter = "prompter"
+
+// PrompterKeyMsg is a tap on the phone's teleprompter: toggle, next, prev, faster, slower.
+type PrompterKeyMsg struct {
+	Key string `json:"key"`
 }
 
 type CameraInfo struct {

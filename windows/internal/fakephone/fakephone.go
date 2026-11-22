@@ -32,6 +32,9 @@ type Options struct {
 	Frames    int    // stop after N video frames (0 = forever)
 	AudioOnly bool
 	ToneHz    float64
+	Features  []string // announced in HELLO, e.g. "prompter"
+	// PrompterKey is sent back once, after the first PROMPTER_SCRIPT arrives (a tap on the phone).
+	PrompterKey string
 }
 
 // Received records what the PC sent to us.
@@ -42,6 +45,17 @@ type Received struct {
 	Types      []protocol.Type
 	SetConfigs []config.Settings
 	Keyframes  int
+	// teleprompter feed
+	PrompterScripts [][]byte
+	PrompterStates  [][]byte
+	PrompterClears  int
+}
+
+// Prompter returns what the teleprompter feed delivered (thread-safe).
+func (r *Received) Prompter() (scripts, states [][]byte, clears int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([][]byte(nil), r.PrompterScripts...), append([][]byte(nil), r.PrompterStates...), r.PrompterClears
 }
 
 func (r *Received) add(p protocol.Packet) {
@@ -56,6 +70,12 @@ func (r *Received) add(p protocol.Packet) {
 		}
 	case protocol.RequestKeyframe:
 		r.Keyframes++
+	case protocol.PrompterScript:
+		r.PrompterScripts = append(r.PrompterScripts, p.Payload)
+	case protocol.PrompterState:
+		r.PrompterStates = append(r.PrompterStates, p.Payload)
+	case protocol.PrompterClear:
+		r.PrompterClears++
 	}
 }
 
@@ -168,7 +188,7 @@ func serve(c net.Conn, opt Options, rec *Received, done <-chan struct{}, certFP 
 	hello, _ := json.Marshal(protocol.HelloMsg{
 		Model: opt.Model, Manufacturer: "Fake", AppVersion: "test", Protocol: 1,
 		Cameras: []protocol.CameraInfo{{ID: "0", Facing: "back", Sizes: [][2]int{{1280, 720}, {1920, 1080}}, FPS: []int{30, 60}}},
-		PhoneID: opt.PhoneID, Token: opt.Token,
+		PhoneID: opt.PhoneID, Token: opt.Token, Features: opt.Features,
 	})
 	if err := send(protocol.Hello, 0, hello); err != nil {
 		return err
@@ -192,6 +212,12 @@ func serve(c net.Conn, opt Options, rec *Received, done <-chan struct{}, certFP 
 				rec.add(p)
 			}
 			switch p.Type {
+			case protocol.PrompterScript:
+				if opt.PrompterKey != "" {
+					k, _ := json.Marshal(protocol.PrompterKeyMsg{Key: opt.PrompterKey})
+					send(protocol.PrompterKey, 0, k)
+					opt.PrompterKey = ""
+				}
 			case protocol.Ping:
 				if pong, err := protocol.PongPayload(p.Payload, time.Now().UnixNano()); err == nil {
 					send(protocol.Pong, 0, pong)

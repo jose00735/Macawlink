@@ -11,6 +11,14 @@ real USB webcam. The phone's microphone feeds a virtual mic.
 - **USB or Wi-Fi, switching automatically** when you plug or unplug the cable; Wi-Fi uses TLS 1.3 with Bluetooth-style code pairing, mDNS discovery, adaptive bitrate, A/V sync
 - **Tweakable live** from the phone or the PC: resolution (480p–1440p), 15–60 fps, bitrate (or auto), H.264/HEVC, lens, zoom, torch, stabilization, mirror, manual focus, exposure compensation, white balance, AE/AWB lock, sample rate (16–48 kHz), mono/stereo, echo/noise/gain processing, PC-side gain, plus presets
 
+## Teleprompter on the phone (with TeleCyborg)
+
+With [TeleCyborg](https://github.com/jose00735/telecyborg) 1.1+ on the same PC, press **P** in its
+prompter: your script appears on the phone's screen beside the front lens while the phone streams
+as your webcam, so you read next to the camera. Use the **front** lens. Tap the phone to pause,
+swipe up/down to change paragraph, ✕ to go back to the settings. The text is shown on the phone
+only — it is never part of the video your call receives.
+
 ## Setup (one time)
 
 1. **PC: Windows 10 or 11.** Run **`MacawlinkSetup-<version>.exe`** and accept the administrator prompt.

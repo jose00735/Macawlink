@@ -3,6 +3,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
+    id("app.cash.paparazzi")
 }
 
 android {
@@ -13,8 +14,8 @@ android {
         applicationId = "com.macawlink"
         minSdk = 29          // Android 10: Camera2 SessionConfiguration, MediaCodec B-frame control, thermal API
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.3.1"
+        versionCode = 5
+        versionName = "0.4.0"
     }
 
     signingConfigs {

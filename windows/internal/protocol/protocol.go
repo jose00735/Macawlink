@@ -41,6 +41,10 @@ const (
 	PairReveal      Type = 0x52 // PC→phone {nonce}
 	PairConfirm     Type = 0x53 // phone→PC {ok}
 	PairResult      Type = 0x54 // PC→phone {ok, token, reason}
+	PrompterScript  Type = 0x60 // PC→phone teleprompter text (phones that announce "prompter")
+	PrompterState   Type = 0x61 // PC→phone position, several times a second
+	PrompterClear   Type = 0x62 // PC→phone hide the teleprompter
+	PrompterKey     Type = 0x63 // phone→PC {key}: a tap on the phone
 	Bye             Type = 0x7F
 )
 

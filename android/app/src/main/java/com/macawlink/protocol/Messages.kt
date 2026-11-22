@@ -16,7 +16,40 @@ data class HelloMsg(
     val cameras: List<CameraInfo>,
     @SerialName("phone_id") val phoneId: String? = null, // Wi-Fi only
     val token: String? = null,                            // Wi-Fi: from a previous pairing
+    val features: List<String> = emptyList(),             // optional abilities, e.g. "prompter"
 )
+
+/** Teleprompter feed from TeleCyborg on the PC, shown over the camera preview (never in the stream). */
+const val FEATURE_PROMPTER = "prompter"
+
+@Serializable
+data class PrompterBlock(val k: String = "para", val t: String = "") // k: sec | para | cue
+
+@Serializable
+data class PrompterScript(
+    val id: String = "",
+    val title: String = "",
+    val track: String = "main", // main | answer
+    val blocks: List<PrompterBlock> = emptyList(),
+    @SerialName("font_scale") val fontScale: Double = 1.0,
+    val mirror: Boolean = false,
+)
+
+@Serializable
+data class PrompterState(
+    val id: String = "",
+    val para: Int = 0,
+    val frac: Double = 0.0,
+    val speed: Double = 0.0, // frac per second, to move smoothly between updates
+    val playing: Boolean = false,
+    val wpm: Int = 0,
+    val clock: String = "",
+    val alert: String = "",  // "", behind, ahead, miss, wrap
+    val hint: String = "",
+)
+
+@Serializable
+data class PrompterKeyMsg(val key: String) // toggle, next, prev, faster, slower
 
 @Serializable
 data class CameraInfo(val id: String, val facing: String, val sizes: List<List<Int>>, val fps: List<Int>)
